@@ -42,19 +42,54 @@ export const processEmail = internalAction({
 
       const extracted = await extractContent(htmlBody, apiKey);
 
-      // 3. Get series info
+      // 3. Resolve the correct series.
+      // The ingest step assigns a series based on the envelope sender,
+      // but for forwarded emails that's the forwarder's address, not the
+      // newsletter's. Use the AI-extracted sender_email or publication_name
+      // to find or create the right series.
       let series = await ctx.runQuery(internal.series.getInternal, {
         id: issue.seriesId,
       });
-      const seriesName = series?.name ?? extracted.publication_name;
 
-      // Update series name if it was a placeholder
-      if (series && series.name !== extracted.publication_name && extracted.publication_name) {
+      const realSenderEmail = extracted.sender_email || series?.senderEmail || "";
+      const publicationName = extracted.publication_name || series?.name || "";
+
+      // If AI found a different sender than what the series has, re-match
+      if (extracted.sender_email && series && extracted.sender_email !== series.senderEmail) {
+        // Look for an existing series with the real sender
+        const correctSeries = await ctx.runQuery(internal.series.findByEmail, {
+          senderEmail: extracted.sender_email,
+        });
+        if (correctSeries) {
+          // Re-assign this issue to the correct series
+          series = correctSeries;
+          await ctx.runMutation(internal.issues.updateStatus, {
+            id: args.issueId,
+            status: "extracting",
+            seriesId: correctSeries._id,
+          });
+        } else {
+          // Create a new series with the real sender
+          const newSeriesId = await ctx.runMutation(internal.series.createSeries, {
+            name: publicationName,
+            senderEmail: extracted.sender_email,
+          });
+          series = await ctx.runQuery(internal.series.getInternal, { id: newSeriesId });
+          await ctx.runMutation(internal.issues.updateStatus, {
+            id: args.issueId,
+            status: "extracting",
+            seriesId: newSeriesId,
+          });
+        }
+      } else if (series && series.name !== publicationName && publicationName) {
+        // Same sender but better name from AI — update
         await ctx.runMutation(internal.series.updateName, {
           id: series._id,
-          name: extracted.publication_name,
+          name: publicationName,
         });
       }
+
+      const seriesName = series?.name ?? publicationName;
 
       // 4. Run design analysis if this series hasn't been analyzed yet
       let seriesCss: string | undefined;

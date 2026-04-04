@@ -2,6 +2,7 @@ export interface ExtractedContent {
   title: string;
   author: string | null;
   publication_name: string;
+  sender_email: string | null;
   issue_date: string | null;
   content_html: string;
   summary: string;
