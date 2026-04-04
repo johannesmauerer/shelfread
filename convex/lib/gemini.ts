@@ -15,10 +15,13 @@ Given this newsletter email HTML, extract:
 4. **issue_date**: The publication date (ISO 8601) if mentioned, or null
 5. **content_html**: The article body as clean, semantic HTML:
    - Keep: headings, paragraphs, blockquotes, lists, images (with src URLs), links, emphasis, strong
-   - Remove: navigation, headers, footers, unsubscribe links, tracking pixels, social media buttons, "view in browser" links, advertisements, any non-content chrome
+   - Keep: hero images, featured artwork, editorial illustrations, and any large decorative images that are part of the reading experience — these are content, not chrome
+   - Remove: tiny tracking pixels (1x1 images), social media share buttons, "view in browser" links, unsubscribe links, email footer boilerplate, navigation menus
+   - Remove: small UI icons, logos under 100px, spacer images, and advertisements
    - Preserve the author's structural choices (section breaks, pull quotes, asides)
+   - When in doubt about whether an image is content or chrome, KEEP it
 6. **summary**: A single sentence summary of this issue
-7. **images**: Array of image URLs that are part of the content (not logos, icons, or tracking pixels)
+7. **images**: Array of ALL image URLs that appear in the content_html (not tracking pixels or tiny icons)
 
 Return valid JSON only, no markdown fences.`;
 
