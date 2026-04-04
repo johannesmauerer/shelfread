@@ -124,7 +124,7 @@ figcaption {
 
 a {
   color: ${accent};
-  text-decoration: none;
+  text-decoration: underline;
 }
 
 p { margin: 0.8em 0; }

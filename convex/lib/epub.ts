@@ -32,7 +32,7 @@ blockquote {
 }
 hr { border: none; border-top: 1px solid #ddd; margin: 2em 0; }
 img { max-width: 100%; height: auto; }
-a { color: #e74c3c; text-decoration: none; }
+a { color: #e74c3c; text-decoration: underline; }
 p { margin: 0.8em 0; }
 `;
 
