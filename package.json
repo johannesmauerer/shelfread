@@ -1,0 +1,17 @@
+{
+  "name": "shelfread",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Newsletter-to-EPUB service with OPDS catalog",
+  "license": "MIT",
+  "scripts": {
+    "dev": "npx convex dev",
+    "dev:web": "cd web && npm run dev",
+    "dev:all": "npx concurrently \"npm run dev\" \"npm run dev:web\""
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "convex": "^1.21.0",
+    "epub-gen-memory": "^1.1.2"
+  }
+}

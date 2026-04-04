@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json.schemastore.org/convex.json",
+  "functions": "convex/",
+  "node": {
+    "externalPackages": ["epub-gen-memory", "@google/generative-ai"]
+  }
+}

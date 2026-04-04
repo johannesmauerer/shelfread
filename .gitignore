@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Convex
+convex/_generated/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Build output
+dist/
+.vercel/
+.output/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Cloudflare
+.wrangler/
+
+# Local tooling
+.agents/
+.claude/
+CLAUDE.md
+AGENTS.md
+skills-lock.json

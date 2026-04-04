@@ -1,0 +1,128 @@
+/* Shelf — Base EPUB Stylesheet */
+
+body {
+  font-family: Georgia, "Iowan Old Style", serif;
+  line-height: 1.7;
+  margin: 1em;
+  color: #1a1a1a;
+}
+
+/* Series masthead bar */
+.series-header {
+  border-top: 4px solid #2c3e50;
+  padding-top: 0.5em;
+  margin-bottom: 2em;
+}
+
+.series-name {
+  font-size: 0.8em;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #2c3e50;
+}
+
+.issue-date {
+  font-size: 0.75em;
+  color: #888;
+  margin-top: 0.2em;
+}
+
+h1 {
+  font-size: 1.8em;
+  line-height: 1.2;
+  margin-bottom: 0.3em;
+}
+
+h2, h3 {
+  color: #2c3e50;
+}
+
+h2 {
+  font-size: 1.4em;
+  margin-top: 1.5em;
+}
+
+h3 {
+  font-size: 1.15em;
+  margin-top: 1.2em;
+}
+
+/* Drop cap on first paragraph */
+.first-paragraph::first-letter {
+  float: left;
+  font-size: 3.2em;
+  line-height: 0.8;
+  padding-right: 0.08em;
+  color: #2c3e50;
+}
+
+/* Pull quotes */
+blockquote {
+  border-left: 3px solid #e74c3c;
+  margin-left: 0;
+  padding-left: 1em;
+  font-style: italic;
+  color: #555;
+}
+
+/* Callout boxes */
+.callout {
+  background: #f4f6f7;
+  padding: 1em;
+  border-radius: 4px;
+  margin: 1.5em 0;
+}
+
+hr {
+  border: none;
+  border-top: 1px solid #ddd;
+  margin: 2em 0;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+figcaption {
+  font-size: 0.85em;
+  color: #888;
+  text-align: center;
+  margin-top: 0.3em;
+}
+
+a {
+  color: #e74c3c;
+  text-decoration: none;
+}
+
+p {
+  margin: 0.8em 0;
+}
+
+ul, ol {
+  margin: 0.8em 0;
+  padding-left: 1.5em;
+}
+
+code {
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.9em;
+  background: #f4f6f7;
+  padding: 0.1em 0.3em;
+  border-radius: 2px;
+}
+
+pre {
+  background: #f4f6f7;
+  padding: 1em;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 0.85em;
+  line-height: 1.4;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+}

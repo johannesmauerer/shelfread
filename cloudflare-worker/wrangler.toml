@@ -1,0 +1,8 @@
+name = "shelf-email-worker"
+main = "email-worker.js"
+compatibility_date = "2025-01-01"
+workers_dev = false
+
+[vars]
+SHELF_INGEST_URL = "https://YOUR-DEPLOYMENT.convex.site/ingest"  # Update with your Convex site URL
+# SHELF_INGEST_KEY = ""  # Set via `wrangler secret put SHELF_INGEST_KEY` if needed
