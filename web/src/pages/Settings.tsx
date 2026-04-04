@@ -21,18 +21,27 @@ export function Settings() {
       <h2 style={{ marginTop: 0 }}>Settings</h2>
 
       <Section title="OPDS Feed">
+        <p style={{ ...helpStyle, marginBottom: "1rem", marginTop: 0 }}>
+          Your OPDS feed is protected by a secret URL path and optional Basic Auth.
+          Set <code>OPDS_SECRET_PATH</code>, <code>OPDS_USERNAME</code>, and <code>OPDS_PASSWORD</code> in
+          Convex environment variables. Then use the URLs below in your reader app.
+        </p>
         <div style={{ marginBottom: "0.75rem" }}>
           <label style={labelStyle}>Catalog URL</label>
-          <CopyableUrl url={`${siteUrl}/opds/shelf/catalog.xml`} />
+          <CopyableUrl url={`${siteUrl}/opds/YOUR_SECRET/catalog.xml`} />
+        </div>
+        <div style={{ marginBottom: "0.75rem" }}>
+          <label style={labelStyle}>Recent Issues (direct)</label>
+          <CopyableUrl url={`${siteUrl}/opds/YOUR_SECRET/recent.xml`} />
           <p style={helpStyle}>
-            Add this URL to Readest, KOReader, or any OPDS-compatible reader app.
+            Use this if your reader doesn't support navigation feeds.
           </p>
         </div>
         <div>
-          <label style={labelStyle}>Recent Issues (direct)</label>
-          <CopyableUrl url={`${siteUrl}/opds/shelf/recent.xml`} />
+          <label style={labelStyle}>Base URL</label>
+          <CopyableUrl url={siteUrl} />
           <p style={helpStyle}>
-            Use this if your reader doesn't support navigation feeds.
+            Replace YOUR_SECRET with the value of your <code>OPDS_SECRET_PATH</code> env var.
           </p>
         </div>
       </Section>

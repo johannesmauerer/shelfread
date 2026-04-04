@@ -13,6 +13,18 @@ function xmlResponse(body: string): Response {
 }
 
 function checkAuth(request: Request): Response | null {
+  // 1. Validate secret URL path
+  const opdsSecretPath = process.env.OPDS_SECRET_PATH;
+  if (opdsSecretPath) {
+    const url = new URL(request.url);
+    const match = url.pathname.match(/^\/opds\/([^/]+)/);
+    const providedSecret = match ? match[1] : "";
+    if (providedSecret !== opdsSecretPath) {
+      return new Response("Not found", { status: 404 });
+    }
+  }
+
+  // 2. Validate Basic Auth credentials
   const opdsUser = process.env.OPDS_USERNAME || "shelf";
   const opdsPass = process.env.OPDS_PASSWORD;
 
