@@ -1,6 +1,7 @@
 "use node";
 
 import { EPub } from "epub-gen-memory";
+import JSZip from "jszip";
 
 interface EpubOptions {
   title: string;
@@ -63,8 +64,18 @@ function escapeHtml(text: string): string {
 }
 
 function addFirstParagraphClass(html: string): string {
-  // Add .first-paragraph class to the first <p> tag for drop cap styling
   return html.replace(/<p(?=[\s>])/, '<p class="first-paragraph"');
+}
+
+// Inject EPUB 3 belongs-to-collection metadata for series grouping
+function injectSeriesMetadata(opfContent: string, seriesName: string): string {
+  const seriesMetadata = `
+        <meta property="belongs-to-collection" id="series-id">${escapeHtml(seriesName)}</meta>
+        <meta refines="#series-id" property="collection-type">series</meta>
+        <meta refines="#series-id" property="group-position">1</meta>`;
+
+  // Insert before </metadata>
+  return opfContent.replace("</metadata>", `${seriesMetadata}\n    </metadata>`);
 }
 
 export async function generateEpub(options: EpubOptions): Promise<Buffer> {
@@ -103,6 +114,22 @@ export async function generateEpub(options: EpubOptions): Promise<Buffer> {
   );
 
   await epubInstance.render();
-  const buffer = await epubInstance.genEpub();
-  return buffer as Buffer;
+  const rawBuffer = await epubInstance.genEpub();
+
+  // Post-process: inject series metadata into the OPF
+  const zip = await JSZip.loadAsync(rawBuffer);
+  const opfFile = zip.file("OEBPS/content.opf");
+  if (opfFile) {
+    const opfContent = await opfFile.async("string");
+    const updatedOpf = injectSeriesMetadata(opfContent, options.seriesName);
+    zip.file("OEBPS/content.opf", updatedOpf);
+  }
+
+  const buffer = await zip.generateAsync({
+    type: "nodebuffer",
+    mimeType: "application/epub+zip",
+    compression: "DEFLATE",
+  });
+
+  return buffer;
 }
