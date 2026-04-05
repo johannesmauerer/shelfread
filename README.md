@@ -70,9 +70,10 @@ In the [Convex dashboard](https://dashboard.convex.dev), go to your project > Se
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `GEMINI_API_KEY` | Yes | Google Gemini API key |
+| `OPDS_SECRET_PATH` | Recommended | Secret path segment in OPDS URL (e.g. a random UUID) |
 | `OPDS_USERNAME` | No | Basic Auth username for OPDS (default: `shelf`) |
-| `OPDS_PASSWORD` | No | Basic Auth password for OPDS (disabled if unset) |
-| `DOWNLOAD_SECRET` | No | HMAC secret for signed download URLs (default: dev secret) |
+| `OPDS_PASSWORD` | Recommended | Basic Auth password for OPDS — use alphanumeric only |
+| `DOWNLOAD_SECRET` | Recommended | HMAC secret for signed download URLs |
 | `SHELF_INGEST_KEY` | No | Shared secret for webhook authentication |
 
 ### 4. Start the dashboard
@@ -106,16 +107,16 @@ The issue should appear in the dashboard, process through Gemini, and produce a 
 Add this OPDS catalog URL in your reader app's library settings:
 
 ```
-https://YOUR-DEPLOYMENT.convex.site/opds/shelf/catalog.xml
+https://YOUR-DEPLOYMENT.convex.site/opds/YOUR_SECRET_PATH/catalog.xml
 ```
+
+Replace `YOUR_SECRET_PATH` with the value of your `OPDS_SECRET_PATH` environment variable. If you set `OPDS_PASSWORD`, configure Basic Auth in your reader with the username (default: `shelf`) and password.
 
 If your reader doesn't support navigation feeds, use the direct recent issues feed:
 
 ```
-https://YOUR-DEPLOYMENT.convex.site/opds/shelf/recent.xml
+https://YOUR-DEPLOYMENT.convex.site/opds/YOUR_SECRET_PATH/recent.xml
 ```
-
-The OPDS feed URL and credentials are also shown on the Settings page of the dashboard.
 
 ## Email Automation
 
@@ -133,11 +134,14 @@ ShelfRead accepts emails via any service that can POST to a webhook. The ingest 
 ```bash
 cd cloudflare-worker
 npm install
+cp wrangler.toml.example wrangler.toml
+# Edit wrangler.toml — set SHELF_INGEST_URL to your Convex site URL
 npx wrangler login
 npx wrangler deploy
 ```
 
 4. In Cloudflare dashboard, create an Email Routing rule: `inbox@yourdomain.xyz` → Send to Worker → `shelf-email-worker`
+5. Forward newsletters to `inbox@yourdomain.xyz` — they'll appear as EPUBs in your OPDS feed
 
 See `cloudflare-worker/` for the full worker source code.
 
@@ -168,7 +172,7 @@ shelfread/
 │       └── types.ts         # Shared type definitions
 ├── cloudflare-worker/       # Email ingestion worker
 │   ├── email-worker.js      # Cloudflare Email Worker
-│   ├── wrangler.toml        # Worker config
+│   ├── wrangler.toml.example # Worker config template (copy to wrangler.toml)
 │   └── package.json
 ├── web/                     # React dashboard
 │   └── src/
