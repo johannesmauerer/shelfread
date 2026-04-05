@@ -74,8 +74,12 @@ function injectSeriesMetadata(opfContent: string, seriesName: string): string {
         <meta refines="#series-id" property="collection-type">series</meta>
         <meta refines="#series-id" property="group-position">1</meta>`;
 
-  // Insert before </metadata>
   return opfContent.replace("</metadata>", `${seriesMetadata}\n    </metadata>`);
+}
+
+// Remove TOC from the reading spine so it doesn't show as a page
+function removeTocFromSpine(opfContent: string): string {
+  return opfContent.replace(/<itemref idref="toc"\s*\/>/, "");
 }
 
 export async function generateEpub(options: EpubOptions): Promise<Buffer> {
@@ -120,9 +124,10 @@ export async function generateEpub(options: EpubOptions): Promise<Buffer> {
   const zip = await JSZip.loadAsync(rawBuffer);
   const opfFile = zip.file("OEBPS/content.opf");
   if (opfFile) {
-    const opfContent = await opfFile.async("string");
-    const updatedOpf = injectSeriesMetadata(opfContent, options.seriesName);
-    zip.file("OEBPS/content.opf", updatedOpf);
+    let opfContent = await opfFile.async("string");
+    opfContent = injectSeriesMetadata(opfContent, options.seriesName);
+    opfContent = removeTocFromSpine(opfContent);
+    zip.file("OEBPS/content.opf", opfContent);
   }
 
   const buffer = await zip.generateAsync({
