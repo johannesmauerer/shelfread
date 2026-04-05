@@ -1,7 +1,7 @@
 name = "shelf-email-worker"
 main = "email-worker.js"
 compatibility_date = "2025-01-01"
-workers_dev = false
+workers_dev = true
 
 [vars]
 SHELF_INGEST_URL = "https://YOUR-DEPLOYMENT.convex.site/ingest"  # Update with your Convex site URL
