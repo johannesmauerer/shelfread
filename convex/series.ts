@@ -104,7 +104,19 @@ export const getInternal = internalQuery({
 export const updateName = internalMutation({
   args: { id: v.id("series"), name: v.string() },
   handler: async (ctx, args) => {
-    await ctx.db.patch(args.id, { name: args.name });
+    const slug = slugify(args.name);
+    let finalSlug = slug;
+    let counter = 1;
+    while (true) {
+      const existing = await ctx.db
+        .query("series")
+        .withIndex("by_slug", (q) => q.eq("slug", finalSlug))
+        .first();
+      if (!existing || existing._id === args.id) break;
+      finalSlug = `${slug}-${counter}`;
+      counter++;
+    }
+    await ctx.db.patch(args.id, { name: args.name, slug: finalSlug });
   },
 });
 
