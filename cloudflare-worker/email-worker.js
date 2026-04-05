@@ -37,6 +37,7 @@ export default {
         headers,
         body: JSON.stringify({
           from: originalFrom || message.from,
+          forwardedBy: message.from,
           subject,
           htmlBody,
         }),

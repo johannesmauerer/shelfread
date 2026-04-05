@@ -3,19 +3,20 @@ import { internal } from "./_generated/api";
 
 interface ParsedEmail {
   from: string;
+  forwardedBy?: string;
   subject: string;
   htmlBody: string;
 }
 
-// Parse the request body — supports JSON (dashboard) and multipart/form-data (Mailgun)
+// Parse the request body — supports JSON (dashboard/worker) and multipart/form-data (Mailgun)
 async function parseRequest(request: Request): Promise<ParsedEmail> {
   const contentType = request.headers.get("Content-Type") || "";
 
   if (contentType.includes("application/json")) {
-    // JSON format from dashboard manual ingest
     const body = await request.json();
     return {
       from: body.from || "",
+      forwardedBy: body.forwardedBy || undefined,
       subject: body.subject || "",
       htmlBody: body.htmlBody || body.textBody || "",
     };
@@ -60,7 +61,6 @@ export const receiveEmail = httpAction(async (ctx, request) => {
     if (ingestKey) {
       const providedKey = request.headers.get("X-Shelf-Ingest-Key");
       if (providedKey !== ingestKey) {
-        // For Mailgun, also check if it's a JSON request from dashboard (no key needed)
         const contentType = request.headers.get("Content-Type") || "";
         if (!contentType.includes("application/json")) {
           return jsonResponse({ error: "Unauthorized" }, 401);
@@ -68,16 +68,23 @@ export const receiveEmail = httpAction(async (ctx, request) => {
       }
     }
 
-    // Check sender allowlist
+    // Check sender allowlist — check both the original sender and the forwarder
     const allowedSendersStr = await ctx.runQuery(internal.settings.get, {
       key: "allowed_senders",
     });
     if (allowedSendersStr) {
       const allowedSenders: string[] = JSON.parse(allowedSendersStr);
-      if (allowedSenders.length > 0 && !allowedSenders.includes(senderEmail)) {
-        console.log(`Rejected email from non-allowlisted sender: ${senderEmail}`);
-        // Silent drop — don't reveal that this endpoint exists
-        return jsonResponse({ ok: true }, 200);
+      if (allowedSenders.length > 0) {
+        const forwarderEmail = parsed.forwardedBy
+          ? extractEmail(parsed.forwardedBy)
+          : null;
+        const isAllowed =
+          allowedSenders.includes(senderEmail) ||
+          (forwarderEmail && allowedSenders.includes(forwarderEmail));
+        if (!isAllowed) {
+          console.log(`Rejected email from non-allowlisted sender: ${senderEmail}`);
+          return jsonResponse({ ok: true }, 200);
+        }
       }
     }
 
