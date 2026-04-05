@@ -29,6 +29,7 @@ Thumbs.db
 
 # Cloudflare
 .wrangler/
+cloudflare-worker/wrangler.toml
 
 # Local tooling
 .agents/
