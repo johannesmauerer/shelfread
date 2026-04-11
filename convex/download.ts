@@ -20,7 +20,12 @@ export const downloadSigned = httpAction(async (ctx, request) => {
     return new Response("Download link expired or invalid", { status: 403 });
   }
 
-  return serveEpub(ctx, issueId as Id<"issues">);
+  // Try as issue first, then as magazine
+  const issueResult = await serveEpub(ctx, issueId as Id<"issues">);
+  if (issueResult.status !== 404 && issueResult.status !== 400) {
+    return issueResult;
+  }
+  return serveMagazine(ctx, issueId as Id<"magazines">);
 });
 
 // Direct download endpoint (used by dashboard, no signing required for now)
@@ -37,6 +42,36 @@ export const downloadDirect = httpAction(async (ctx, request) => {
 
   return serveEpub(ctx, issueId);
 });
+
+async function serveMagazine(ctx: any, magazineId: Id<"magazines">): Promise<Response> {
+  let magazine;
+  try {
+    magazine = await ctx.runQuery(internal.magazineHelpers.getById, {
+      id: magazineId,
+    });
+  } catch {
+    return new Response("Invalid magazine ID", { status: 400 });
+  }
+
+  if (!magazine || !magazine.epubFileId) {
+    return new Response("Magazine not found", { status: 404 });
+  }
+
+  const blob = await ctx.storage.get(magazine.epubFileId);
+  if (!blob) {
+    return new Response("Magazine EPUB file not found in storage", { status: 404 });
+  }
+
+  const filename = `${magazine.title.replace(/[^a-zA-Z0-9\s-]/g, "").replace(/\s+/g, "-")}.epub`;
+
+  return new Response(blob, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/epub+zip",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+    },
+  });
+}
 
 async function serveEpub(ctx: any, issueId: Id<"issues">): Promise<Response> {
   let issue;

@@ -84,6 +84,10 @@ export const opdsRouter = httpAction(async (ctx, request) => {
   if (path.endsWith("/recent.xml")) {
     return handleRecent(ctx, basePath);
   }
+  // /opds/{secret}/magazine.xml
+  if (path.endsWith("/magazine.xml")) {
+    return handleMagazine(ctx, basePath);
+  }
 
   return new Response("Not found", { status: 404 });
 });
@@ -118,6 +122,14 @@ async function handleCatalog(ctx: any, basePath: string): Promise<Response> {
           href: `${basePath}/recent.xml`,
           type: "application/atom+xml;profile=opds-catalog;kind=acquisition",
           content: "Latest newsletter issues across all series",
+          updated,
+        },
+        {
+          title: "ShelfRead Magazine",
+          id: "urn:shelf:magazine",
+          href: `${basePath}/magazine.xml`,
+          type: "application/atom+xml;profile=opds-catalog;kind=acquisition",
+          content: "Monthly digest combining all newsletters into one magazine",
           updated,
         },
       ],
@@ -238,6 +250,42 @@ async function handleRecent(ctx: any, basePath: string): Promise<Response> {
       id: "urn:shelf:recent",
       title: "Shelf — Recent Issues",
       selfHref: `${basePath}/recent.xml`,
+      startHref: `${basePath}/catalog.xml`,
+      updated,
+      entries,
+    })
+  );
+}
+
+async function handleMagazine(ctx: any, basePath: string): Promise<Response> {
+  const magazines = await ctx.runQuery(internal.magazineHelpers.listInternal);
+  const readyMagazines = magazines.filter((m: any) => m.epubFileId);
+  const secret = getDownloadSecret();
+  const updated = readyMagazines.length > 0
+    ? new Date(readyMagazines[0].updatedAt).toISOString()
+    : new Date().toISOString();
+
+  const entries = await Promise.all(
+    readyMagazines.map(async (mag: any) => {
+      const token = await createSignedToken(mag._id, secret);
+      return {
+        title: mag.title,
+        id: `urn:shelf:magazine:${mag.month}`,
+        author: "ShelfRead",
+        updated: new Date(mag.updatedAt).toISOString(),
+        published: new Date(mag.createdAt).toISOString(),
+        summary: `Monthly digest — ${mag.articleCount} article${mag.articleCount === 1 ? "" : "s"}`,
+        downloadHref: `/dl/${token}`,
+        sizeBytes: mag.epubSizeBytes,
+      };
+    })
+  );
+
+  return xmlResponse(
+    acquisitionFeed({
+      id: "urn:shelf:magazine",
+      title: "ShelfRead Magazine",
+      selfHref: `${basePath}/magazine.xml`,
       startHref: `${basePath}/catalog.xml`,
       updated,
       entries,

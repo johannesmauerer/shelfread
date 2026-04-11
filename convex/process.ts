@@ -165,6 +165,17 @@ export const processEmail = internalAction({
         seriesId: issue.seriesId,
       });
 
+      // 10. Rebuild monthly magazine
+      const magazineDate = issueDate
+        ? new Date(issueDate)
+        : new Date();
+      const magazineMonth = `${magazineDate.getUTCFullYear()}-${String(magazineDate.getUTCMonth() + 1).padStart(2, "0")}`;
+      await ctx.scheduler.runAfter(
+        5000,
+        internal.magazine.rebuildMagazine,
+        { month: magazineMonth }
+      );
+
       console.log(`Processed issue ${args.issueId}: "${extracted.title}"`);
     } catch (error) {
       const message =
