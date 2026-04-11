@@ -20,12 +20,16 @@ export const downloadSigned = httpAction(async (ctx, request) => {
     return new Response("Download link expired or invalid", { status: 403 });
   }
 
-  // Try as issue first, then as magazine
+  // Determine if this is an issue or magazine ID and serve accordingly
   const issueResult = await serveEpub(ctx, issueId as Id<"issues">);
-  if (issueResult.status !== 404 && issueResult.status !== 400) {
+  if (issueResult.status === 200) {
     return issueResult;
   }
-  return serveMagazine(ctx, issueId as Id<"magazines">);
+  const magazineResult = await serveMagazine(ctx, issueId as Id<"magazines">);
+  if (magazineResult.status === 200) {
+    return magazineResult;
+  }
+  return new Response("Download not found", { status: 404 });
 });
 
 // Direct download endpoint (used by dashboard, no signing required for now)

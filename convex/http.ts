@@ -1,5 +1,7 @@
 import { httpRouter } from "convex/server";
 import { receiveEmail } from "./ingest";
+import { receiveUrl } from "./ingestUrl";
+import { receiveArticle } from "./ingestArticle";
 import { downloadDirect, downloadSigned } from "./download";
 import { opdsRouter } from "./opds";
 
@@ -10,6 +12,20 @@ http.route({
   path: "/ingest",
   method: "POST",
   handler: receiveEmail,
+});
+
+// URL ingest (from SnapRoute, etc.)
+http.route({
+  path: "/ingest-url",
+  method: "POST",
+  handler: receiveUrl,
+});
+
+// Article ingest (from browser extensions like SnapRoute)
+http.route({
+  path: "/ingest-article",
+  method: "POST",
+  handler: receiveArticle,
 });
 
 // Direct download (dashboard)
