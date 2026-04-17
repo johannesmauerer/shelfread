@@ -307,14 +307,20 @@ export async function generateMagazineEpub(options: MagazineOptions): Promise<Bu
   await epubInstance.render();
   const rawBuffer = await epubInstance.genEpub();
 
-  // Post-process: inject magazine collection metadata
+  // Post-process: inject magazine collection metadata + stable identifier
   const zip = await JSZip.loadAsync(rawBuffer);
   const opfFile = zip.file("OEBPS/content.opf");
   if (opfFile) {
     let opfContent = await opfFile.async("string");
     opfContent = injectSeriesMetadata(opfContent, "ShelfRead Magazine");
-    // Remove cover from spine so TOC is the natural entry
     opfContent = removeTocFromSpine(opfContent);
+    // Replace the random UUID identifier with a stable one per month
+    // so e-readers recognize updated versions as the same book
+    const stableId = `urn:shelf:magazine:${options.month}`;
+    opfContent = opfContent.replace(
+      /<dc:identifier id="BookId">[^<]+<\/dc:identifier>/,
+      `<dc:identifier id="BookId">${stableId}</dc:identifier>`
+    );
     zip.file("OEBPS/content.opf", opfContent);
   }
 
