@@ -2,6 +2,7 @@
 
 import { EPub } from "epub-gen-memory";
 import JSZip from "jszip";
+import { composeCover } from "./cover";
 
 interface EpubOptions {
   title: string;
@@ -272,18 +273,31 @@ p { margin: 0.8em 0; }
 `;
 
 export async function generateMagazineEpub(options: MagazineOptions): Promise<Buffer> {
-  const coverHtml = buildMagazineCoverHtml(options);
+  const tocHtml = buildMagazineCoverHtml(options);
 
   const chapters = [
     {
-      title: "Cover",
-      content: coverHtml,
+      title: "In This Issue",
+      content: tocHtml,
     },
     ...options.articles.map((article) => ({
       title: article.title,
       content: buildArticleChapterHtml(article),
     })),
   ];
+
+  // Compose the painted cover image (mid-century base art + masthead + issue badge).
+  // Falls back to coverless EPUB if composition fails — log but don't break the build.
+  let coverFile: File | undefined;
+  try {
+    const coverPng = await composeCover({
+      month: options.month,
+      issueNumber: options.issueNumber,
+    });
+    coverFile = new File([coverPng], "cover.png", { type: "image/png" });
+  } catch (err) {
+    console.warn("Cover composition failed, falling back to no cover:", err);
+  }
 
   const epubInstance = new EPub(
     {
@@ -300,6 +314,7 @@ export async function generateMagazineEpub(options: MagazineOptions): Promise<Bu
       fetchTimeout: 10000,
       retryTimes: 2,
       ignoreFailedDownloads: true,
+      ...(coverFile ? { cover: coverFile } : {}),
     },
     chapters
   );
@@ -321,6 +336,14 @@ export async function generateMagazineEpub(options: MagazineOptions): Promise<Bu
       /<dc:identifier id="BookId">[^<]+<\/dc:identifier>/,
       `<dc:identifier id="BookId">${stableId}</dc:identifier>`
     );
+    // epub-gen-memory only emits EPUB2-style `<meta name="cover">`. Modern EPUB3
+    // readers expect `properties="cover-image"` on the manifest item — add it.
+    if (coverFile) {
+      opfContent = opfContent.replace(
+        /<item\s+id="image_cover"\s+href="cover\.png"\s+media-type="image\/png"\s*\/>/,
+        '<item id="image_cover" href="cover.png" media-type="image/png" properties="cover-image" />'
+      );
+    }
     zip.file("OEBPS/content.opf", opfContent);
   }
 
