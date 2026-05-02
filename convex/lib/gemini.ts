@@ -44,15 +44,40 @@ function getClient(apiKey: string) {
   return new GoogleGenerativeAI(apiKey);
 }
 
+const MODEL = "gemini-3-flash";
+// Long-form newsletters can run 30k+ tokens of cleaned content. The 8192-token
+// SDK default truncates them and breaks JSON parsing; raise to the model max.
+const MAX_OUTPUT_TOKENS = 65535;
+
+function parseGeminiJson<T>(result: Awaited<ReturnType<ReturnType<GoogleGenerativeAI["getGenerativeModel"]>["generateContent"]>>, label: string): T {
+  const text = result.response.text();
+  const finishReason = result.response.candidates?.[0]?.finishReason;
+  if (finishReason && finishReason !== "STOP") {
+    throw new Error(
+      `Gemini ${label} ended with finishReason=${finishReason} ` +
+        `(output ${text.length} chars). Likely hit maxOutputTokens or a safety stop.`
+    );
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch (err) {
+    const tail = text.slice(-200);
+    throw new Error(
+      `Gemini ${label} returned unparseable JSON (${text.length} chars, finishReason=${finishReason ?? "unknown"}). Tail: ${tail}`
+    );
+  }
+}
+
 export async function extractContent(
   htmlBody: string,
   apiKey: string
 ): Promise<ExtractedContent> {
   const client = getClient(apiKey);
   const model = client.getGenerativeModel({
-    model: "gemini-2.5-flash",
+    model: MODEL,
     generationConfig: {
       responseMimeType: "application/json",
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
     },
   });
 
@@ -61,8 +86,7 @@ export async function extractContent(
     `\n\nHere is the newsletter HTML:\n\n${htmlBody}`,
   ]);
 
-  const text = result.response.text();
-  return JSON.parse(text) as ExtractedContent;
+  return parseGeminiJson<ExtractedContent>(result, "extraction");
 }
 
 export async function analyzeDesign(
@@ -71,9 +95,10 @@ export async function analyzeDesign(
 ): Promise<DesignProfile> {
   const client = getClient(apiKey);
   const model = client.getGenerativeModel({
-    model: "gemini-2.5-flash",
+    model: MODEL,
     generationConfig: {
       responseMimeType: "application/json",
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
     },
   });
 
@@ -82,6 +107,5 @@ export async function analyzeDesign(
     `\n\nHere is the newsletter HTML:\n\n${htmlBody}`,
   ]);
 
-  const text = result.response.text();
-  return JSON.parse(text) as DesignProfile;
+  return parseGeminiJson<DesignProfile>(result, "design analysis");
 }
