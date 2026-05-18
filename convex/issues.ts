@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import {
   query,
+  mutation,
   internalMutation,
   internalQuery,
 } from "./_generated/server";
@@ -119,6 +120,34 @@ export const listRecentInternal = internalQuery({
       .withIndex("by_received")
       .order("desc")
       .take(50);
+  },
+});
+
+export const listFailedInternal = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("issues").collect();
+    return all.filter((i) => i.status === "failed").map((i) => i._id);
+  },
+});
+
+export const deleteIssue = mutation({
+  args: { id: v.id("issues") },
+  handler: async (ctx, args) => {
+    const issue = await ctx.db.get(args.id);
+    if (!issue) return { deleted: false };
+    if (issue.epubFileId) await ctx.storage.delete(issue.epubFileId);
+    if (issue.rawHtmlStorageId) await ctx.storage.delete(issue.rawHtmlStorageId);
+    await ctx.db.delete(args.id);
+    return { deleted: true };
+  },
+});
+
+export const deleteSeries = mutation({
+  args: { id: v.id("series") },
+  handler: async (ctx, args) => {
+    await ctx.db.delete(args.id);
+    return { deleted: true };
   },
 });
 

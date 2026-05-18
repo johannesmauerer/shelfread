@@ -1,7 +1,7 @@
 "use node";
 
 import { v } from "convex/values";
-import { internalAction } from "./_generated/server";
+import { action, internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { extractContent, analyzeDesign } from "./lib/gemini";
 import { generateEpub } from "./lib/epub";
@@ -202,5 +202,23 @@ export const processEmail = internalAction({
         );
       }
     }
+  },
+});
+
+export const retryFailed = action({
+  args: {},
+  handler: async (ctx) => {
+    const ids = await ctx.runQuery(internal.issues.listFailedInternal, {});
+    for (const id of ids) {
+      await ctx.runMutation(internal.issues.updateStatus, {
+        id,
+        status: "pending",
+        retryCount: 0,
+      });
+      await ctx.scheduler.runAfter(0, internal.process.processEmail, {
+        issueId: id,
+      });
+    }
+    return { rescheduled: ids.length };
   },
 });
