@@ -44,7 +44,7 @@ function getClient(apiKey: string) {
   return new GoogleGenerativeAI(apiKey);
 }
 
-const MODEL = "gemini-3-flash";
+const MODEL = "gemini-3-flash-preview";
 // Long-form newsletters can run 30k+ tokens of cleaned content. The 8192-token
 // SDK default truncates them and breaks JSON parsing; raise to the model max.
 const MAX_OUTPUT_TOKENS = 65535;
