@@ -19,7 +19,6 @@ body {
   font-family: Georgia, "Iowan Old Style", serif;
   line-height: 1.7;
   margin: 1em;
-  color: #1a1a1a;
 }
 h1 { font-size: 1.8em; line-height: 1.2; margin-bottom: 0.3em; }
 h2, h3 { color: #2c3e50; }
@@ -32,10 +31,21 @@ blockquote {
   font-style: italic;
   color: #555;
 }
-hr { border: none; border-top: 1px solid #ddd; margin: 2em 0; }
+hr { border: none; border-top: 1px solid #999; margin: 2em 0; }
 img { max-width: 100%; height: auto; }
-a { color: #e74c3c; text-decoration: underline; }
+a { color: #c0392b; text-decoration: underline; }
 p { margin: 0.8em 0; }
+.series-name { color: #2c3e50; }
+.issue-date { color: #666; font-style: italic; }
+
+@media (prefers-color-scheme: dark) {
+  h2, h3 { color: #d4d4d4; }
+  blockquote { color: #c8c8c8; border-left-color: #ff8a7a; }
+  a { color: #ff8a7a; }
+  hr { border-top-color: #555; }
+  .series-name { color: #d4d4d4; }
+  .issue-date { color: #b8b8b8; }
+}
 `;
 
 function buildCoverHtml(seriesName: string, title: string, issueDate: string | null): string {
@@ -160,7 +170,6 @@ body {
   font-family: Georgia, "Iowan Old Style", serif;
   line-height: 1.7;
   margin: 1em;
-  color: #1a1a1a;
 }
 
 /* Cover page */
@@ -187,12 +196,13 @@ body {
 
 .magazine-date {
   font-size: 1.1em;
-  color: #555;
+  color: #444;
+  font-style: italic;
 }
 
 .magazine-count {
   font-size: 0.85em;
-  color: #888;
+  color: #555;
   margin-top: 0.3em;
 }
 
@@ -216,8 +226,8 @@ body {
 }
 
 .toc-meta {
-  font-size: 0.8em;
-  color: #888;
+  font-size: 0.85em;
+  color: #555;
 }
 
 /* Article chapters */
@@ -235,22 +245,24 @@ body {
 }
 
 .article-date {
-  font-size: 0.75em;
-  color: #888;
+  font-size: 0.8em;
+  color: #555;
   margin-top: 0.2em;
+  font-style: italic;
 }
 
 .article-author {
-  font-size: 0.9em;
-  color: #555;
+  font-size: 0.95em;
+  color: #444;
   margin-bottom: 1em;
 }
 
 .article-summary {
-  color: #555;
-  border-left: 3px solid #ddd;
+  color: #333;
+  border-left: 3px solid #999;
   padding-left: 1em;
   margin: 1em 0;
+  font-size: 1.02em;
 }
 
 h1 { font-size: 1.8em; line-height: 1.2; margin-bottom: 0.3em; }
@@ -263,13 +275,44 @@ blockquote {
   margin-left: 0;
   padding-left: 1em;
   font-style: italic;
-  color: #555;
+  color: #333;
 }
 
-hr { border: none; border-top: 1px solid #ddd; margin: 2em 0; }
+hr { border: none; border-top: 1px solid #999; margin: 2em 0; }
 img { max-width: 100%; height: auto; }
 a { color: #c0392b; text-decoration: underline; }
 p { margin: 0.8em 0; }
+
+/* Dark mode: e-readers/Books that respect prefers-color-scheme repaint
+   the background dark; we shift accent colors to high-contrast counterparts.
+   Body text inherits the reader's foreground, so it stays readable in both modes. */
+@media (prefers-color-scheme: dark) {
+  .magazine-brand {
+    color: #ff8a7a;
+    border-top-color: #ff8a7a;
+    border-bottom-color: #ff8a7a;
+  }
+  .magazine-date { color: #d8d8d8; }
+  .magazine-count { color: #c0c0c0; }
+  .magazine-toc h2 { color: #ff8a7a; }
+  .toc-meta { color: #c0c0c0; }
+
+  .article-header { border-top-color: #ff8a7a; }
+  .article-series { color: #ff8a7a; }
+  .article-date { color: #c8c8c8; }
+  .article-author { color: #d8d8d8; }
+  .article-summary { color: #e0e0e0; border-left-color: #777; }
+
+  h2, h3 { color: #d4d4d4; }
+
+  blockquote {
+    color: #d8d8d8;
+    border-left-color: #ff8a7a;
+  }
+
+  hr { border-top-color: #555; }
+  a { color: #ff8a7a; }
+}
 `;
 
 export async function generateMagazineEpub(options: MagazineOptions): Promise<Buffer> {
