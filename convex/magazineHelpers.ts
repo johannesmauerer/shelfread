@@ -24,6 +24,14 @@ export const getById = internalQuery({
   },
 });
 
+export const getIssuesByIds = internalQuery({
+  args: { ids: v.array(v.id("issues")) },
+  handler: async (ctx, args) => {
+    const issues = await Promise.all(args.ids.map((id) => ctx.db.get(id)));
+    return issues.filter((i): i is NonNullable<typeof i> => i !== null);
+  },
+});
+
 export const countAll = internalQuery({
   args: {},
   handler: async (ctx) => {

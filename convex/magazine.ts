@@ -10,6 +10,94 @@ import type { Doc, Id } from "./_generated/dataModel";
  * Rebuild (or create) the magazine for a given month.
  * Called after each issue is marked "ready".
  */
+/**
+ * Rebuild an existing magazine using its stored articleIds.
+ * Skips any articleIds that no longer resolve (issue deleted).
+ * Preserves article order; updates articleIds/articleCount accordingly.
+ */
+export const rebuildExistingMagazine = internalAction({
+  args: { magazineId: v.id("magazines") },
+  handler: async (ctx, args) => {
+    const existing: Doc<"magazines"> | null = await ctx.runQuery(
+      internal.magazineHelpers.getById,
+      { id: args.magazineId }
+    );
+    if (!existing) {
+      throw new Error(`Magazine ${args.magazineId} not found`);
+    }
+
+    const resolvedIssues: Doc<"issues">[] = await ctx.runQuery(
+      internal.magazineHelpers.getIssuesByIds,
+      { ids: existing.articleIds }
+    );
+
+    const resolvedIds = new Set(resolvedIssues.map((i) => i._id));
+    const orderedIssues = existing.articleIds
+      .filter((id) => resolvedIds.has(id))
+      .map((id) => resolvedIssues.find((i) => i._id === id)!) as Doc<"issues">[];
+
+    if (orderedIssues.length === 0) {
+      throw new Error(`No resolvable articles for magazine ${args.magazineId}`);
+    }
+
+    const seriesCache = new Map<string, Doc<"series">>();
+    const articles = [];
+    for (const issue of orderedIssues) {
+      let series = seriesCache.get(issue.seriesId);
+      if (!series) {
+        const s = await ctx.runQuery(internal.series.getInternal, {
+          id: issue.seriesId,
+        });
+        if (s) {
+          series = s;
+          seriesCache.set(issue.seriesId, s);
+        }
+      }
+      articles.push({
+        issueId: issue._id,
+        title: issue.title,
+        author: issue.author ?? null,
+        seriesName: series?.name ?? "Unknown",
+        contentHtml: issue.cleanContent ?? "<p>Content unavailable.</p>",
+        summary: issue.summary ?? null,
+        issueDate: issue.issueDate
+          ? new Date(issue.issueDate).toISOString().split("T")[0]
+          : null,
+      });
+    }
+
+    console.log(
+      `Rebuilding ${existing.title} (${articles.length} articles, was ${existing.articleCount})`
+    );
+
+    const epubBuffer = await generateMagazineEpub({
+      title: existing.title,
+      issueNumber: existing.issueNumber,
+      month: existing.month,
+      articles,
+    });
+
+    const blob = new Blob([epubBuffer], { type: "application/epub+zip" });
+    const epubFileId = await ctx.storage.store(blob);
+
+    if (existing.epubFileId) {
+      await ctx.storage.delete(existing.epubFileId);
+    }
+
+    await ctx.runMutation(internal.magazineHelpers.update, {
+      id: existing._id,
+      title: existing.title,
+      articleCount: articles.length,
+      articleIds: orderedIssues.map((i) => i._id) as Id<"issues">[],
+      epubFileId,
+      epubSizeBytes: epubBuffer.length,
+      updatedAt: Date.now(),
+    });
+
+    console.log(`Rebuilt ${existing.title}`);
+  },
+});
+
 export const rebuildMagazine = internalAction({
   args: { month: v.string() },
   handler: async (ctx, args) => {
