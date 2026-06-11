@@ -49,6 +49,41 @@ export const receiveArticle = httpAction(async (ctx, request) => {
       return jsonResponse({ error: "Invalid URL" }, 400);
     }
 
+    // Reject captures that contain no real article. A WebView can capture a page
+    // that failed to load — most commonly X.com serving its "Something went
+    // wrong, disable privacy extensions" shell when an embed/tweet is blocked.
+    // Storing that would create a fake "article" whose body is an error message.
+    // Check the VISIBLE text (scripts/styles/markup removed), not raw HTML length
+    // (which is huge for these pages because of inline JS bundles).
+    const visibleText = html
+      .replace(/<script\b[\s\S]*?<\/script>/gi, "")
+      .replace(/<style\b[\s\S]*?<\/style>/gi, "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const ERROR_SHELL_SIGNATURES = [
+      "Something went wrong, but don",
+      "privacy related extensions may cause issues on x.com",
+      "Please disable them and try again",
+      "Enable JavaScript to run this app",
+    ];
+    const isErrorShell = ERROR_SHELL_SIGNATURES.some((sig) =>
+      visibleText.includes(sig)
+    );
+
+    if (isErrorShell || visibleText.length < 200) {
+      return jsonResponse(
+        {
+          error:
+            "Captured page has no readable article content (it looks like an " +
+            "error or unloaded page). Try opening the page fully before sending.",
+          visibleTextLength: visibleText.length,
+        },
+        422
+      );
+    }
+
     // Extract title from HTML if not provided
     let title = providedTitle;
     if (!title) {

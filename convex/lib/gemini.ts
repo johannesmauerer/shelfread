@@ -80,6 +80,28 @@ function getClient(apiKey: string) {
   return new GoogleGenerativeAI(apiKey);
 }
 
+/**
+ * Strip non-content chrome from captured page HTML before sending to Gemini.
+ *
+ * WebView captures (document.documentElement.outerHTML) include inline <script>
+ * bundles, <style> blocks, SVGs, etc. Pages that embed tweets inline Twitter's
+ * entire minified webpack runtime (~hundreds of KB of high-entropy JS) — large
+ * enough to make Gemini reject the request with `400 invalid argument`. None of
+ * this is article content, so removing it fixes the 400, cuts token cost, and
+ * gives the model a cleaner signal. Confirmed root cause via bisection on a
+ * Twitter-embed-heavy page (Vlad's Blog).
+ */
+export function sanitizeHtml(html: string): string {
+  return html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, "")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, "")
+    .replace(/<svg\b[\s\S]*?<\/svg>/gi, "")
+    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, "")
+    .replace(/<template\b[\s\S]*?<\/template>/gi, "")
+    .replace(/<link\b[^>]*>/gi, "")
+    .replace(/<!--[\s\S]*?-->/g, "");
+}
+
 const MODEL = "gemini-3-flash-preview";
 // Long-form newsletters can run 30k+ tokens of cleaned content. The 8192-token
 // SDK default truncates them and breaks JSON parsing; raise to the model max.
@@ -140,6 +162,8 @@ export async function extractContent(
     },
   });
 
+  const cleanHtml = sanitizeHtml(htmlBody);
+
   // Extraction is non-deterministic: a given call may return malformed JSON or
   // an empty content_html even when the same HTML extracts cleanly on the next
   // attempt. Retry a couple of times in-process before surfacing a failure to
@@ -149,7 +173,7 @@ export async function extractContent(
     try {
       const result = await model.generateContent([
         EXTRACTION_PROMPT,
-        `\n\nHere is the newsletter HTML:\n\n${htmlBody}`,
+        `\n\nHere is the newsletter HTML:\n\n${cleanHtml}`,
       ]);
       const extracted = parseGeminiJson<ExtractedContent>(result, "extraction");
       if ((extracted.content_html ?? "").trim().length >= 50) {
@@ -180,9 +204,16 @@ export async function analyzeDesign(
     },
   });
 
+  // Strip only <script> + comments here (not <style>): design analysis relies
+  // on style/color info, but the oversized inline JS bundles are what trip the
+  // 400 and add no design signal.
+  const cleanHtml = htmlBody
+    .replace(/<script\b[\s\S]*?<\/script>/gi, "")
+    .replace(/<!--[\s\S]*?-->/g, "");
+
   const result = await model.generateContent([
     DESIGN_PROMPT,
-    `\n\nHere is the newsletter HTML:\n\n${htmlBody}`,
+    `\n\nHere is the newsletter HTML:\n\n${cleanHtml}`,
   ]);
 
   return parseGeminiJson<DesignProfile>(result, "design analysis");
