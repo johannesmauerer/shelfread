@@ -94,14 +94,37 @@ function parseGeminiJson<T>(result: Awaited<ReturnType<ReturnType<GoogleGenerati
         `(output ${text.length} chars). Likely hit maxOutputTokens or a safety stop.`
     );
   }
+  // The model occasionally ignores responseMimeType=application/json and wraps
+  // its output in a ```json … ``` markdown fence despite the prompt forbidding it.
+  // Strip a leading/trailing fence before parsing.
+  let cleaned = text.trim();
+  if (cleaned.startsWith("```")) {
+    cleaned = cleaned
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/, "")
+      .trim();
+  }
+
+  let parsed: unknown;
   try {
-    return JSON.parse(text) as T;
+    parsed = JSON.parse(cleaned);
   } catch (err) {
-    const tail = text.slice(-200);
+    const tail = cleaned.slice(-200);
     throw new Error(
-      `Gemini ${label} returned unparseable JSON (${text.length} chars, finishReason=${finishReason ?? "unknown"}). Tail: ${tail}`
+      `Gemini ${label} returned unparseable JSON (${cleaned.length} chars, finishReason=${finishReason ?? "unknown"}). Tail: ${tail}`
     );
   }
+
+  // Despite responseMimeType=application/json and an object-shaped prompt, the
+  // model non-deterministically wraps the result in a single-element array
+  // (`[ { ... } ]`). That parses fine but leaves callers reading `.content_html`
+  // off an Array, which is undefined — the root cause of silently empty content.
+  // Unwrap a single-element array back to the object.
+  if (Array.isArray(parsed) && parsed.length === 1) {
+    parsed = parsed[0];
+  }
+
+  return parsed as T;
 }
 
 export async function extractContent(
@@ -117,12 +140,31 @@ export async function extractContent(
     },
   });
 
-  const result = await model.generateContent([
-    EXTRACTION_PROMPT,
-    `\n\nHere is the newsletter HTML:\n\n${htmlBody}`,
-  ]);
-
-  return parseGeminiJson<ExtractedContent>(result, "extraction");
+  // Extraction is non-deterministic: a given call may return malformed JSON or
+  // an empty content_html even when the same HTML extracts cleanly on the next
+  // attempt. Retry a couple of times in-process before surfacing a failure to
+  // the pipeline (which would otherwise wait out its 60s+ retry backoff).
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const result = await model.generateContent([
+        EXTRACTION_PROMPT,
+        `\n\nHere is the newsletter HTML:\n\n${htmlBody}`,
+      ]);
+      const extracted = parseGeminiJson<ExtractedContent>(result, "extraction");
+      if ((extracted.content_html ?? "").trim().length >= 50) {
+        return extracted;
+      }
+      lastError = new Error(
+        `extraction returned empty content_html on attempt ${attempt}`
+      );
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("extraction failed after 3 attempts");
 }
 
 export async function analyzeDesign(

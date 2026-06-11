@@ -42,6 +42,17 @@ export const processEmail = internalAction({
 
       const extracted = await extractContent(htmlBody, apiKey);
 
+      // Guard: never mark an issue "ready" with empty body content. If extraction
+      // returns no usable content_html, throw so the catch block records a real
+      // failure and schedules a retry — instead of silently producing an empty
+      // EPUB and a "Content unavailable." magazine entry.
+      const extractedContent = (extracted.content_html ?? "").trim();
+      if (extractedContent.length < 50) {
+        throw new Error(
+          `Extraction returned empty content_html (${extractedContent.length} chars) for "${extracted.title ?? issue.title}"`
+        );
+      }
+
       // 3. Resolve the correct series.
       // The ingest step assigns a series based on the envelope sender,
       // but for forwarded emails that's the forwarder's address, not the
