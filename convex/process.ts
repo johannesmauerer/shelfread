@@ -171,6 +171,13 @@ export const processEmail = internalAction({
         epubSizeBytes: epubBuffer.length,
       });
 
+      // Reprocessing replaces the EPUB but storage.store() never frees the old
+      // blob. Delete the prior EPUB now that the new one is committed, so repeated
+      // reprocessing doesn't leak ~MB-scale orphans into file storage.
+      if (issue.epubFileId && issue.epubFileId !== epubFileId) {
+        await ctx.storage.delete(issue.epubFileId);
+      }
+
       // 9. Update series issue count
       await ctx.runMutation(internal.series.incrementIssueCount, {
         seriesId: issue.seriesId,
