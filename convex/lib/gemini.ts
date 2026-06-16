@@ -120,6 +120,31 @@ const MAX_OUTPUT_TOKENS = 65535;
 // digest newsletter manifests as silently abridging items. Pin it near zero so
 // the model reproduces the source instead of editorializing.
 const EXTRACTION_TEMPERATURE = 0;
+// Hard ceiling for a single Gemini call. The SDK sets no timeout, so a hung
+// request leaves the whole Convex action stuck in "extracting" forever (no
+// throw → no retry, no log). Some large articles reproducibly stalled this way.
+// Time the call out instead, so the attempt fails fast and the retry loop (or
+// the pipeline's own retry) gets a fresh, usually-successful call.
+const GEMINI_CALL_TIMEOUT_MS = 90_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${ms}ms`)),
+      ms
+    );
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      }
+    );
+  });
+}
 
 function parseGeminiJson<T>(result: Awaited<ReturnType<ReturnType<GoogleGenerativeAI["getGenerativeModel"]>["generateContent"]>>, label: string): T {
   const text = result.response.text();
@@ -187,7 +212,11 @@ export async function extractContent(
   let lastError: unknown;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const result = await model.generateContent([EXTRACTION_PROMPT, userPart]);
+      const result = await withTimeout(
+        model.generateContent([EXTRACTION_PROMPT, userPart]),
+        GEMINI_CALL_TIMEOUT_MS,
+        `extraction attempt ${attempt}`
+      );
       const finishReason = result.response.candidates?.[0]?.finishReason;
 
       // The body genuinely exceeded one response. Don't fail (the old behavior
@@ -246,7 +275,11 @@ async function extractLongArticle(
   const META_PROMPT = `${EXTRACTION_PROMPT}
 
 OVERRIDE FOR THIS CALL: set "content_html" to the empty string "". Return ONLY the metadata fields (title, author, publication_name, sender_email, issue_date, summary, images). Do not extract the body in this call.`;
-  const metaResult = await jsonModel.generateContent([META_PROMPT, userPart]);
+  const metaResult = await withTimeout(
+    jsonModel.generateContent([META_PROMPT, userPart]),
+    GEMINI_CALL_TIMEOUT_MS,
+    "long-article metadata"
+  );
   const meta = parseGeminiJson<ExtractedContent>(metaResult, "long-article metadata");
 
   // 2. Body as raw HTML, continued across turns until it ends cleanly.
@@ -280,7 +313,11 @@ ${cleanHtml}`;
   let message = BODY_PROMPT;
   const MAX_TURNS = 8; // hard cap so a misbehaving model can't loop forever
   for (let turn = 1; turn <= MAX_TURNS; turn++) {
-    const res = await chat.sendMessage(message);
+    const res = await withTimeout(
+      chat.sendMessage(message),
+      GEMINI_CALL_TIMEOUT_MS,
+      `long-article body turn ${turn}`
+    );
     const chunk = res.response.text();
     const finish = res.response.candidates?.[0]?.finishReason;
     fullBody += chunk;
