@@ -6,6 +6,20 @@ import { internal } from "./_generated/api";
 import { generateMagazineEpub } from "./lib/epub";
 import type { Doc, Id } from "./_generated/dataModel";
 
+// Delete a storage blob without letting a missing/already-deleted id throw.
+// storage.delete raises StorageIdNotFound for a stale id, which would otherwise
+// abort a magazine rebuild after the new EPUB is already stored.
+async function deleteStorageSafe(
+  ctx: { storage: { delete: (id: Id<"_storage">) => Promise<void> } },
+  id: Id<"_storage">
+): Promise<void> {
+  try {
+    await ctx.storage.delete(id);
+  } catch (err) {
+    console.warn(`Skipping delete of missing storage blob ${id}:`, err);
+  }
+}
+
 /**
  * Rebuild (or create) the magazine for a given month.
  * Called after each issue is marked "ready".
@@ -80,8 +94,11 @@ export const rebuildExistingMagazine = internalAction({
     const blob = new Blob([epubBuffer], { type: "application/epub+zip" });
     const epubFileId = await ctx.storage.store(blob);
 
+    // Best-effort cleanup of the previous EPUB. A missing/already-deleted blob
+    // must NOT abort the rebuild — otherwise the new EPUB is stored but the
+    // magazine record never updates, leaving stale content and a leaked blob.
     if (existing.epubFileId) {
-      await ctx.storage.delete(existing.epubFileId);
+      await deleteStorageSafe(ctx, existing.epubFileId);
     }
 
     await ctx.runMutation(internal.magazineHelpers.update, {
@@ -188,9 +205,9 @@ export const rebuildMagazine = internalAction({
     ) as Id<"issues">[];
 
     if (existing) {
-      // Delete old EPUB file
+      // Best-effort delete of the old EPUB; a missing blob must not abort.
       if (existing.epubFileId) {
-        await ctx.storage.delete(existing.epubFileId);
+        await deleteStorageSafe(ctx, existing.epubFileId);
       }
       await ctx.runMutation(internal.magazineHelpers.update, {
         id: existing._id,

@@ -7,6 +7,45 @@ import { extractContent, analyzeDesign } from "./lib/gemini";
 import { generateEpub } from "./lib/epub";
 import { generateSeriesCSS } from "./lib/css";
 
+// Chrome that legitimately appears in the source but is NOT article content.
+// Used to keep the retention denominator honest — otherwise footers and legal
+// boilerplate count as "dropped content" and every issue looks truncated.
+const CHROME_PATTERN =
+  /forwarded message|unsubscribe|view (this|in) (your )?browser|privacy policy|terms of service|all rights reserved|affiliate|ethics policy|copyright|sent to you in error|update your preferences/i;
+
+function visibleText(html: string): string {
+  return html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, "")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, "")
+    .replace(/<svg\b[\s\S]*?<\/svg>/gi, "")
+    .replace(/<head\b[\s\S]*?<\/head>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Fraction of the source's *content* words preserved in the extracted body.
+ * Splits the source into sentence-ish units, drops obvious chrome, and measures
+ * how many survive into cleanContent. ~1.0 means a faithful extraction; a low
+ * value flags a likely truncation. Used two ways in processEmail: a hard gate
+ * (<0.35 throws → retry, so catastrophic failures never ship) and a soft
+ * warning (<0.6 logs). The verbatim prompt is the actual fix; this is the
+ * tripwire that catches regressions instead of silently shipping half an
+ * article (the original bug).
+ */
+function computeRetention(rawHtml: string, cleanHtml: string): number {
+  const srcSentences = visibleText(rawHtml)
+    .split(/(?<=[.!?”"])\s+/)
+    .filter((s) => s.trim().length > 25 && !CHROME_PATTERN.test(s));
+  const srcWords = srcSentences.join(" ").split(/\s+/).filter(Boolean).length;
+  if (srcWords < 50) return 1; // too little source content to judge meaningfully
+  const cleanWords = visibleText(cleanHtml).split(/\s+/).filter(Boolean).length;
+  return Math.min(1, cleanWords / srcWords);
+}
+
 export const processEmail = internalAction({
   args: { issueId: v.id("issues") },
   handler: async (ctx, args) => {
@@ -50,6 +89,26 @@ export const processEmail = internalAction({
       if (extractedContent.length < 50) {
         throw new Error(
           `Extraction returned empty content_html (${extractedContent.length} chars) for "${extracted.title ?? issue.title}"`
+        );
+      }
+
+      // Retention gate: how much of the source content survived extraction.
+      // The empty-guard above only catches a TOTALLY empty body. The real bug
+      // was *partial* bodies that look fine — and extraction can still fail
+      // catastrophically (e.g. the model returns a fragment + a chatbot
+      // "would you like me to summarize?" reply). Throw on a catastrophically
+      // low ratio so the issue RETRIES instead of shipping half an article.
+      // Threshold is conservative (only true failures, not legitimately short
+      // posts); borderline cases pass but get a logged warning below.
+      const retentionRatio = computeRetention(htmlBody, extractedContent);
+      if (retentionRatio < 0.35) {
+        throw new Error(
+          `Extraction retained only ${(retentionRatio * 100).toFixed(0)}% of source content for "${extracted.title ?? issue.title}" — likely truncated; retrying`
+        );
+      }
+      if (retentionRatio < 0.6) {
+        console.warn(
+          `LOW RETENTION (${(retentionRatio * 100).toFixed(0)}%) for issue ${args.issueId} "${extracted.title}" — extraction may have dropped content`
         );
       }
 
@@ -146,6 +205,7 @@ export const processEmail = internalAction({
         cleanContent: extracted.content_html,
         summary: extracted.summary,
         issueDate,
+        retentionRatio,
       });
 
       // 6. Generate EPUB with series-specific CSS
@@ -238,5 +298,73 @@ export const retryFailed = action({
       });
     }
     return { rescheduled: ids.length };
+  },
+});
+
+// Re-run extraction + EPUB for a single existing issue, synchronously, and
+// return the resulting retention + content length. Used to validate extraction
+// changes against known issues and to repair individual articles.
+export const reprocessOne = action({
+  args: { id: v.id("issues") },
+  handler: async (ctx, args): Promise<{
+    id: string;
+    title?: string;
+    status?: string;
+    retentionRatio?: number;
+    cleanContentChars: number;
+  }> => {
+    await ctx.runMutation(internal.issues.updateStatus, {
+      id: args.id,
+      status: "pending",
+      retryCount: 0,
+    });
+    // Await the pipeline directly (not via scheduler) so the result is ready to
+    // read when this returns.
+    await ctx.runAction(internal.process.processEmail, { issueId: args.id });
+    const issue = await ctx.runQuery(internal.issues.get, { id: args.id });
+    return {
+      id: args.id,
+      title: issue?.title,
+      status: issue?.status,
+      retentionRatio: issue?.retentionRatio,
+      cleanContentChars: (issue?.cleanContent ?? "").length,
+    };
+  },
+});
+
+// Reset one issue to pending and schedule a single processEmail run (async,
+// returns immediately). Used to reprocess issues one at a time, which avoids the
+// concurrent-action stalls seen when many heavy Node actions run at once.
+export const scheduleOne = action({
+  args: { id: v.id("issues") },
+  handler: async (ctx, args): Promise<{ id: string; scheduled: true }> => {
+    await ctx.runMutation(internal.issues.updateStatus, {
+      id: args.id,
+      status: "pending",
+      retryCount: 0,
+    });
+    await ctx.scheduler.runAfter(0, internal.process.processEmail, {
+      issueId: args.id,
+    });
+    return { id: args.id, scheduled: true };
+  },
+});
+
+// Re-run extraction + EPUB for every issue in a given month ("YYYY-MM" by
+// issueDate; falls back to receivedAt when issueDate is missing). Schedules each
+// through the normal pipeline, then rebuilds that month's magazine.
+export const reprocessMonth = action({
+  args: { month: v.string() },
+  handler: async (ctx, args): Promise<{ month: string; scheduled: number; ids: string[] }> => {
+    const ids = await ctx.runQuery(internal.issues.listByMonth, { month: args.month });
+    for (const id of ids) {
+      await ctx.runMutation(internal.issues.updateStatus, {
+        id,
+        status: "pending",
+        retryCount: 0,
+      });
+      await ctx.scheduler.runAfter(0, internal.process.processEmail, { issueId: id });
+    }
+    return { month: args.month, scheduled: ids.length, ids };
   },
 });

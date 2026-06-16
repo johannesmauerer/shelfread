@@ -45,6 +45,7 @@ export const updateStatus = internalMutation({
     error: v.optional(v.string()),
     retryCount: v.optional(v.number()),
     seriesId: v.optional(v.id("series")),
+    retentionRatio: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const { id, ...updates } = args;
@@ -128,6 +129,47 @@ export const listFailedInternal = internalQuery({
   handler: async (ctx) => {
     const all = await ctx.db.query("issues").collect();
     return all.filter((i) => i.status === "failed").map((i) => i._id);
+  },
+});
+
+// All issue IDs whose publication month is `month` ("YYYY-MM"). Uses issueDate
+// when present, otherwise falls back to receivedAt, matching how the magazine
+// rebuild buckets issues by month.
+export const listByMonth = internalQuery({
+  args: { month: v.string() },
+  handler: async (ctx, args) => {
+    const all = await ctx.db.query("issues").collect();
+    return all
+      .filter((i) => {
+        const ts = i.issueDate ?? i.receivedAt;
+        const d = new Date(ts);
+        const m = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+        return m === args.month;
+      })
+      .map((i) => i._id);
+  },
+});
+
+// Status + retention for every issue in a month — operational visibility for
+// monitoring a batch reprocess and spotting low-retention extractions.
+export const listByMonthStatus = query({
+  args: { month: v.string() },
+  handler: async (ctx, args) => {
+    const all = await ctx.db.query("issues").collect();
+    return all
+      .filter((i) => {
+        const ts = i.issueDate ?? i.receivedAt;
+        const d = new Date(ts);
+        const m = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+        return m === args.month;
+      })
+      .map((i) => ({
+        id: i._id,
+        title: i.title,
+        status: i.status,
+        retentionRatio: i.retentionRatio,
+        cleanChars: (i.cleanContent ?? "").length,
+      }));
   },
 });
 

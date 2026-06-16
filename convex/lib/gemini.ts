@@ -7,7 +7,15 @@ export type { ExtractedContent, DesignProfile };
 
 const EXTRACTION_PROMPT = `You are an expert at extracting newsletter content from HTML emails.
 
-# CRITICAL OUTPUT RULE — read this first, apply throughout
+# THIS IS A VERBATIM EXTRACTION TASK — NOT SUMMARIZATION
+
+Your single most important job is to reproduce the article body COMPLETELY and WORD FOR WORD. You are a transcriber, not an editor. Copy every sentence of the author's prose exactly as written. Copy every item in every list. Copy every reader submission, every recommendation, every aside, every paragraph of commentary.
+
+Do NOT summarize. Do NOT shorten. Do NOT paraphrase. Do NOT keep only the first sentence of a section and drop the rest. Do NOT condense a multi-sentence item down to its headline. If the author wrote three sentences about a product, output all three sentences. If a "links" or "recommendations" section has ten entries, output all ten — never a representative subset.
+
+A correct extraction contains the same words the reader would see if they read the original email in full, minus only the chrome listed below. Dropping a single sentence of real content is a failure.
+
+# CRITICAL OUTPUT RULE — read this too, apply throughout
 
 The HTML you produce in \`content_html\` will be rendered inside an EPUB reader that switches between light and dark mode. The EPUB has its own stylesheet that adapts to both. Inline color/background declarations in your output OVERRIDE that stylesheet and cause unreadable contrast (e.g. black text on a black dark-mode background).
 
@@ -49,7 +57,8 @@ Given this newsletter email HTML, extract:
 3. **publication_name**: The newsletter's name (e.g., "Stratechery", "Money Stuff")
 4. **sender_email**: The newsletter's sending email address if visible in the email HTML (look for From headers, sender info, or footer text), or null
 5. **issue_date**: The publication date (ISO 8601) if mentioned, or null
-6. **content_html**: The article body as clean, semantic HTML:
+6. **content_html**: The COMPLETE article body as clean, semantic HTML, reproduced verbatim per the rule at the top:
+   - Copy EVERY sentence and EVERY list item — this is transcription, not summarization
    - Keep: headings, paragraphs, blockquotes, lists, images (with src URLs), links, emphasis, strong
    - Keep: hero images, featured artwork, editorial illustrations, and any large decorative images that are part of the reading experience — these are content, not chrome
    - Remove: tiny tracking pixels (1x1 images), social media share buttons, "view in browser" links, unsubscribe links, email footer boilerplate, navigation menus
@@ -106,6 +115,11 @@ const MODEL = "gemini-3-flash-preview";
 // Long-form newsletters can run 30k+ tokens of cleaned content. The 8192-token
 // SDK default truncates them and breaks JSON parsing; raise to the model max.
 const MAX_OUTPUT_TOKENS = 65535;
+// Extraction is a transcription task, not a creative one. The SDK default
+// temperature (1.0) gives the model latitude to "improve" the text — which on a
+// digest newsletter manifests as silently abridging items. Pin it near zero so
+// the model reproduces the source instead of editorializing.
+const EXTRACTION_TEMPERATURE = 0;
 
 function parseGeminiJson<T>(result: Awaited<ReturnType<ReturnType<GoogleGenerativeAI["getGenerativeModel"]>["generateContent"]>>, label: string): T {
   const text = result.response.text();
@@ -159,10 +173,12 @@ export async function extractContent(
     generationConfig: {
       responseMimeType: "application/json",
       maxOutputTokens: MAX_OUTPUT_TOKENS,
+      temperature: EXTRACTION_TEMPERATURE,
     },
   });
 
   const cleanHtml = sanitizeHtml(htmlBody);
+  const userPart = `\n\nHere is the newsletter HTML:\n\n${cleanHtml}`;
 
   // Extraction is non-deterministic: a given call may return malformed JSON or
   // an empty content_html even when the same HTML extracts cleanly on the next
@@ -171,10 +187,16 @@ export async function extractContent(
   let lastError: unknown;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const result = await model.generateContent([
-        EXTRACTION_PROMPT,
-        `\n\nHere is the newsletter HTML:\n\n${cleanHtml}`,
-      ]);
+      const result = await model.generateContent([EXTRACTION_PROMPT, userPart]);
+      const finishReason = result.response.candidates?.[0]?.finishReason;
+
+      // The body genuinely exceeded one response. Don't fail (the old behavior
+      // dropped the article) and don't ship the partial — switch to a chat-based
+      // continuation that streams the body across multiple turns and stitches it.
+      if (finishReason === "MAX_TOKENS") {
+        return await extractLongArticle(client, cleanHtml);
+      }
+
       const extracted = parseGeminiJson<ExtractedContent>(result, "extraction");
       if ((extracted.content_html ?? "").trim().length >= 50) {
         return extracted;
@@ -189,6 +211,112 @@ export async function extractContent(
   throw lastError instanceof Error
     ? lastError
     : new Error("extraction failed after 3 attempts");
+}
+
+/**
+ * Continuation path for articles whose body is too large to emit in a single
+ * response. JSON mode is unusable here: a body that overflows maxOutputTokens
+ * leaves a half-written, unparseable JSON string, and you can't "continue" a
+ * JSON object cleanly. So we split the work:
+ *
+ *   1. Metadata (title/author/summary/etc.) — always small, one JSON call.
+ *   2. Body — extracted as RAW HTML (no JSON wrapper) over a multi-turn chat.
+ *      Each turn carries the full prior conversation ("thought circulation"),
+ *      so the model resumes verbatim from where it stopped instead of
+ *      restarting or re-summarizing. We loop until a turn ends with STOP.
+ *
+ * Stitching raw HTML fragments is safe (concatenation), whereas stitching JSON
+ * fragments is not — which is the whole reason the body is pulled out of JSON.
+ */
+async function extractLongArticle(
+  client: GoogleGenerativeAI,
+  cleanHtml: string
+): Promise<ExtractedContent> {
+  const userPart = `\n\nHere is the newsletter HTML:\n\n${cleanHtml}`;
+
+  // 1. Metadata only — small JSON, fits in one call.
+  const jsonModel = client.getGenerativeModel({
+    model: MODEL,
+    generationConfig: {
+      responseMimeType: "application/json",
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      temperature: EXTRACTION_TEMPERATURE,
+    },
+  });
+  const META_PROMPT = `${EXTRACTION_PROMPT}
+
+OVERRIDE FOR THIS CALL: set "content_html" to the empty string "". Return ONLY the metadata fields (title, author, publication_name, sender_email, issue_date, summary, images). Do not extract the body in this call.`;
+  const metaResult = await jsonModel.generateContent([META_PROMPT, userPart]);
+  const meta = parseGeminiJson<ExtractedContent>(metaResult, "long-article metadata");
+
+  // 2. Body as raw HTML, continued across turns until it ends cleanly.
+  const BODY_PROMPT = `You are an expert at extracting newsletter content from HTML emails.
+
+Output ONLY the article body as clean semantic HTML — no JSON, no markdown fences, no commentary, just the HTML.
+
+THIS IS VERBATIM EXTRACTION, NOT SUMMARIZATION. Copy every sentence and every list item exactly as written. Never summarize, shorten, paraphrase, or drop content.
+
+Apply these output rules: strip \`color\`, \`background\`, \`background-color\` from every inline style; remove \`color=\`, \`bgcolor=\`, \`text=\` legacy attributes; unwrap \`<font color=...>\` tags. Remove only chrome: tracking pixels, share buttons, view-in-browser/unsubscribe links, footer/legal boilerplate, nav menus.
+
+Here is the newsletter HTML:
+
+${cleanHtml}`;
+
+  // Separate model WITHOUT responseMimeType=application/json: we want raw HTML,
+  // not JSON, so continuation turns can be concatenated. (A model created with
+  // JSON mode keeps forcing JSON even when the per-request config omits it.)
+  const textModel = client.getGenerativeModel({
+    model: MODEL,
+    generationConfig: {
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      temperature: EXTRACTION_TEMPERATURE,
+    },
+  });
+  // Use a chat session so prior turns (including the partial body the model has
+  // already produced) stay in context and it continues verbatim.
+  const chat = textModel.startChat();
+
+  let fullBody = "";
+  let message = BODY_PROMPT;
+  const MAX_TURNS = 8; // hard cap so a misbehaving model can't loop forever
+  for (let turn = 1; turn <= MAX_TURNS; turn++) {
+    const res = await chat.sendMessage(message);
+    const chunk = res.response.text();
+    const finish = res.response.candidates?.[0]?.finishReason;
+    fullBody += chunk;
+
+    if (finish === "STOP") break;
+    if (finish !== "MAX_TOKENS") {
+      throw new Error(
+        `long-article body continuation ended with finishReason=${finish} on turn ${turn}`
+      );
+    }
+    if (turn === MAX_TURNS) {
+      throw new Error(
+        `long-article body still truncated after ${MAX_TURNS} continuation turns (${fullBody.length} chars)`
+      );
+    }
+    // Continue exactly where it left off. The chat history already contains the
+    // partial body, so "continue" resumes mid-stream without repeating.
+    message =
+      "Continue the HTML extraction from exactly where you stopped. Do not " +
+      "repeat anything you already output. Do not summarize the rest. Output " +
+      "only the remaining HTML, verbatim.";
+  }
+
+  // Strip any stray markdown fence the model may have wrapped the HTML in.
+  let body = fullBody.trim();
+  if (body.startsWith("```")) {
+    body = body.replace(/^```(?:html)?\s*/i, "").replace(/\s*```$/, "").trim();
+  }
+
+  if (body.length < 50) {
+    throw new Error(
+      `long-article extraction produced empty body (${body.length} chars)`
+    );
+  }
+
+  return { ...meta, content_html: body };
 }
 
 export async function analyzeDesign(

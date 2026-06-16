@@ -40,6 +40,11 @@ export default defineSchema({
     epubFileId: v.optional(v.id("_storage")),
     epubSizeBytes: v.optional(v.number()),
 
+    // Quality: fraction of source content words preserved in cleanContent.
+    // A low value means the extraction likely dropped article content. Recorded
+    // every extraction so truncation is queryable without re-fetching raw HTML.
+    retentionRatio: v.optional(v.number()),
+
     // Processing
     status: v.union(
       v.literal("pending"),
