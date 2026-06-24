@@ -122,10 +122,19 @@ const MAX_OUTPUT_TOKENS = 65535;
 const EXTRACTION_TEMPERATURE = 0;
 // Hard ceiling for a single Gemini call. The SDK sets no timeout, so a hung
 // request leaves the whole Convex action stuck in "extracting" forever (no
-// throw → no retry, no log). Some large articles reproducibly stalled this way.
-// Time the call out instead, so the attempt fails fast and the retry loop (or
-// the pipeline's own retry) gets a fresh, usually-successful call.
-const GEMINI_CALL_TIMEOUT_MS = 90_000;
+// throw → no retry, no log). Time the call out instead.
+//
+// Tuned from a stuck article (Claude Fable, 3.6k words / 85k sanitized chars):
+// a healthy extraction of that size returns in ~5-15s, but the gemini-3-flash
+// endpoint intermittently hangs and never returns. So a call still running at
+// 60s is stuck, not busy — abandon it fast and try a fresh one. We pair the
+// short timeout with several in-process retries (see EXTRACTION_ATTEMPTS):
+// fresh calls usually succeed even when a prior one hung.
+const GEMINI_CALL_TIMEOUT_MS = 60_000;
+// In-process retries before surfacing failure to the pipeline. Bumped from 3 to
+// 5 because the failure mode is a stuck call, not bad input — more fresh shots
+// is the cheap, effective mitigation.
+const EXTRACTION_ATTEMPTS = 5;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -210,7 +219,7 @@ export async function extractContent(
   // attempt. Retry a couple of times in-process before surfacing a failure to
   // the pipeline (which would otherwise wait out its 60s+ retry backoff).
   let lastError: unknown;
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= EXTRACTION_ATTEMPTS; attempt++) {
     try {
       const result = await withTimeout(
         model.generateContent([EXTRACTION_PROMPT, userPart]),
@@ -239,7 +248,7 @@ export async function extractContent(
   }
   throw lastError instanceof Error
     ? lastError
-    : new Error("extraction failed after 3 attempts");
+    : new Error(`extraction failed after ${EXTRACTION_ATTEMPTS} attempts`);
 }
 
 /**
