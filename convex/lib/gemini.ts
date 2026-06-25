@@ -120,20 +120,29 @@ const MAX_OUTPUT_TOKENS = 65535;
 // digest newsletter manifests as silently abridging items. Pin it near zero so
 // the model reproduces the source instead of editorializing.
 const EXTRACTION_TEMPERATURE = 0;
-// Hard ceiling for a single Gemini call. The SDK sets no timeout, so a hung
-// request leaves the whole Convex action stuck in "extracting" forever (no
-// throw → no retry, no log). Time the call out instead.
-//
-// Tuned from a stuck article (Claude Fable, 3.6k words / 85k sanitized chars):
-// a healthy extraction of that size returns in ~5-15s, but the gemini-3-flash
-// endpoint intermittently hangs and never returns. So a call still running at
-// 60s is stuck, not busy — abandon it fast and try a fresh one. We pair the
-// short timeout with several in-process retries (see EXTRACTION_ATTEMPTS):
-// fresh calls usually succeed even when a prior one hung.
-const GEMINI_CALL_TIMEOUT_MS = 60_000;
-// In-process retries before surfacing failure to the pipeline. Bumped from 3 to
-// 5 because the failure mode is a stuck call, not bad input — more fresh shots
-// is the cheap, effective mitigation.
+// gemini-3-flash is a THINKING model. On dense articles (code, terminal output,
+// tool-call transcripts — e.g. a Simon Willison post) it spends its entire
+// token/time budget on internal reasoning before emitting any output: a call
+// with the full 65k-token budget would run >90s and never return, while the
+// same call with thinkingBudget=0 returns the complete body in seconds. Diagnosed
+// by bisection on the "Claude Fable" issue, which timed out every other way.
+// Extraction needs ZERO reasoning, so disable thinking entirely.
+const THINKING_BUDGET = 0;
+// Shared generation config for every extraction call.
+const EXTRACTION_GEN_CONFIG = {
+  responseMimeType: "application/json" as const,
+  maxOutputTokens: MAX_OUTPUT_TOKENS,
+  temperature: EXTRACTION_TEMPERATURE,
+  thinkingConfig: { thinkingBudget: THINKING_BUDGET },
+};
+// Hard ceiling for a single Gemini call. The SDK sets no timeout, so a stuck
+// request would otherwise leave the Convex action in "extracting" forever (no
+// throw → no retry, no log). With thinking disabled most calls return in
+// seconds, but a long, densely-marked-up article (e.g. "Claude Fable" → ~63k
+// chars / 22k output tokens) legitimately takes ~90s to generate. 150s leaves
+// headroom for those while still bounding a genuinely wedged request.
+const GEMINI_CALL_TIMEOUT_MS = 150_000;
+// In-process retries before surfacing failure to the pipeline.
 const EXTRACTION_ATTEMPTS = 5;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -204,11 +213,7 @@ export async function extractContent(
   const client = getClient(apiKey);
   const model = client.getGenerativeModel({
     model: MODEL,
-    generationConfig: {
-      responseMimeType: "application/json",
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
-      temperature: EXTRACTION_TEMPERATURE,
-    },
+    generationConfig: EXTRACTION_GEN_CONFIG,
   });
 
   const cleanHtml = sanitizeHtml(htmlBody);
@@ -275,11 +280,7 @@ async function extractLongArticle(
   // 1. Metadata only — small JSON, fits in one call.
   const jsonModel = client.getGenerativeModel({
     model: MODEL,
-    generationConfig: {
-      responseMimeType: "application/json",
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
-      temperature: EXTRACTION_TEMPERATURE,
-    },
+    generationConfig: EXTRACTION_GEN_CONFIG,
   });
   const META_PROMPT = `${EXTRACTION_PROMPT}
 
@@ -312,6 +313,7 @@ ${cleanHtml}`;
     generationConfig: {
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       temperature: EXTRACTION_TEMPERATURE,
+      thinkingConfig: { thinkingBudget: THINKING_BUDGET },
     },
   });
   // Use a chat session so prior turns (including the partial body the model has
@@ -375,6 +377,9 @@ export async function analyzeDesign(
     generationConfig: {
       responseMimeType: "application/json",
       maxOutputTokens: MAX_OUTPUT_TOKENS,
+      // Disable thinking here too — design analysis is a simple classification
+      // and the thinking phase is what made the dense-article calls hang.
+      thinkingConfig: { thinkingBudget: THINKING_BUDGET },
     },
   });
 
