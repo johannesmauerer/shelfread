@@ -58,6 +58,16 @@ function getDownloadSecret(): string {
   return process.env.DOWNLOAD_SECRET || "shelf-dev-secret";
 }
 
+// When the "magazineOnly" setting is on, the OPDS feed exposes only the monthly
+// ShelfRead Magazine — the per-article By-Series and Recent-Issues views are
+// hidden (and return empty if requested directly). Defaults to off, so existing
+// feeds are unchanged unless explicitly enabled.
+const MAGAZINE_ONLY_KEY = "magazineOnly";
+async function isMagazineOnly(ctx: any): Promise<boolean> {
+  const value = await ctx.runQuery(internal.settings.get, { key: MAGAZINE_ONLY_KEY });
+  return value === "true";
+}
+
 // Single router for all OPDS paths
 export const opdsRouter = httpAction(async (ctx, request) => {
   const authErr = checkAuth(request);
@@ -71,6 +81,34 @@ export const opdsRouter = httpAction(async (ctx, request) => {
   if (path.endsWith("/catalog.xml")) {
     return handleCatalog(ctx, basePath);
   }
+  // /opds/{secret}/magazine.xml — always available
+  if (path.endsWith("/magazine.xml")) {
+    return handleMagazine(ctx, basePath);
+  }
+
+  // The remaining views list individual articles. When magazineOnly is on, serve
+  // an empty acquisition feed even if a reader requests these URLs directly
+  // (cached links), so no per-article entries leak through.
+  const magazineOnly = await isMagazineOnly(ctx);
+  if (magazineOnly) {
+    if (
+      (path.endsWith("/series.xml") && !path.includes("/series/")) ||
+      path.match(/\/series\/([^/.]+)\.xml$/) ||
+      path.endsWith("/recent.xml")
+    ) {
+      return xmlResponse(
+        acquisitionFeed({
+          id: "urn:shelf:hidden",
+          title: "ShelfRead",
+          selfHref: `${basePath}${path.slice(basePath.length)}`,
+          startHref: `${basePath}/catalog.xml`,
+          updated: new Date().toISOString(),
+          entries: [],
+        })
+      );
+    }
+  }
+
   // /opds/{secret}/series.xml (list of all series, not a specific one)
   if (path.endsWith("/series.xml") && !path.includes("/series/")) {
     return handleSeriesList(ctx, basePath);
@@ -84,10 +122,6 @@ export const opdsRouter = httpAction(async (ctx, request) => {
   if (path.endsWith("/recent.xml")) {
     return handleRecent(ctx, basePath);
   }
-  // /opds/{secret}/magazine.xml
-  if (path.endsWith("/magazine.xml")) {
-    return handleMagazine(ctx, basePath);
-  }
 
   return new Response("Not found", { status: 404 });
 });
@@ -100,6 +134,37 @@ async function handleCatalog(ctx: any, basePath: string): Promise<Response> {
   );
   const updated = latestDate ? new Date(latestDate).toISOString() : new Date().toISOString();
 
+  const magazineOnly = await isMagazineOnly(ctx);
+
+  // The per-article browsing views; hidden when magazineOnly is on.
+  const articleEntries = [
+    {
+      title: "By Series",
+      id: "urn:shelf:series",
+      href: `${basePath}/series.xml`,
+      type: "application/atom+xml;profile=opds-catalog;kind=navigation",
+      content: "Browse newsletters organized by publication",
+      updated,
+    },
+    {
+      title: "Recent Issues",
+      id: "urn:shelf:recent",
+      href: `${basePath}/recent.xml`,
+      type: "application/atom+xml;profile=opds-catalog;kind=acquisition",
+      content: "Latest newsletter issues across all series",
+      updated,
+    },
+  ];
+
+  const magazineEntry = {
+    title: "ShelfRead Magazine",
+    id: "urn:shelf:magazine",
+    href: `${basePath}/magazine.xml`,
+    type: "application/atom+xml;profile=opds-catalog;kind=acquisition",
+    content: "Monthly digest combining all newsletters into one magazine",
+    updated,
+  };
+
   return xmlResponse(
     navigationFeed({
       id: "urn:shelf:root",
@@ -107,32 +172,7 @@ async function handleCatalog(ctx: any, basePath: string): Promise<Response> {
       selfHref: `${basePath}/catalog.xml`,
       startHref: `${basePath}/catalog.xml`,
       updated,
-      entries: [
-        {
-          title: "By Series",
-          id: "urn:shelf:series",
-          href: `${basePath}/series.xml`,
-          type: "application/atom+xml;profile=opds-catalog;kind=navigation",
-          content: "Browse newsletters organized by publication",
-          updated,
-        },
-        {
-          title: "Recent Issues",
-          id: "urn:shelf:recent",
-          href: `${basePath}/recent.xml`,
-          type: "application/atom+xml;profile=opds-catalog;kind=acquisition",
-          content: "Latest newsletter issues across all series",
-          updated,
-        },
-        {
-          title: "ShelfRead Magazine",
-          id: "urn:shelf:magazine",
-          href: `${basePath}/magazine.xml`,
-          type: "application/atom+xml;profile=opds-catalog;kind=acquisition",
-          content: "Monthly digest combining all newsletters into one magazine",
-          updated,
-        },
-      ],
+      entries: magazineOnly ? [magazineEntry] : [...articleEntries, magazineEntry],
     })
   );
 }
