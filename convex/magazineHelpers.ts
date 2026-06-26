@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import {
   query,
+  mutation,
   internalQuery,
   internalMutation,
 } from "./_generated/server";
@@ -118,6 +119,27 @@ export const update = internalMutation({
   handler: async (ctx, args) => {
     const { id, ...patch } = args;
     await ctx.db.patch(id, patch);
+  },
+});
+
+// Delete a magazine row and free its EPUB blob. Used to remove duplicate/orphan
+// magazine records (the rebuild path can leave a stale row for a month). The
+// blob delete is best-effort so a missing/already-gone blob doesn't block the
+// row removal.
+export const deleteMagazine = mutation({
+  args: { id: v.id("magazines") },
+  handler: async (ctx, args) => {
+    const mag = await ctx.db.get(args.id);
+    if (!mag) return { deleted: false, reason: "not found" };
+    if (mag.epubFileId) {
+      try {
+        await ctx.storage.delete(mag.epubFileId);
+      } catch (err) {
+        console.warn(`deleteMagazine: blob ${mag.epubFileId} already gone:`, err);
+      }
+    }
+    await ctx.db.delete(args.id);
+    return { deleted: true, month: mag.month, issueNumber: mag.issueNumber };
   },
 });
 
