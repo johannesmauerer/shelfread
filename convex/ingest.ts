@@ -4,6 +4,7 @@ import { internal } from "./_generated/api";
 interface ParsedEmail {
   from: string;
   forwardedBy?: string;
+  recipients?: string[];
   subject: string;
   htmlBody: string;
 }
@@ -17,6 +18,7 @@ async function parseRequest(request: Request): Promise<ParsedEmail> {
     return {
       from: body.from || "",
       forwardedBy: body.forwardedBy || undefined,
+      recipients: Array.isArray(body.recipients) ? body.recipients : undefined,
       subject: body.subject || "",
       htmlBody: body.htmlBody || body.textBody || "",
     };
@@ -28,8 +30,19 @@ async function parseRequest(request: Request): Promise<ParsedEmail> {
   ) {
     // Mailgun inbound webhook format
     const formData = await request.formData();
+    // Mailgun provides "recipient" (envelope) and "To"/"Cc" header fields.
+    const recipients = [
+      formData.get("recipient") as string,
+      formData.get("To") as string,
+      formData.get("Cc") as string,
+    ]
+      .filter(Boolean)
+      .flatMap((v) => v.split(","))
+      .map((v) => v.trim())
+      .filter(Boolean);
     return {
       from: (formData.get("from") as string) || (formData.get("sender") as string) || "",
+      recipients: recipients.length > 0 ? recipients : undefined,
       subject: (formData.get("subject") as string) || "",
       htmlBody:
         (formData.get("body-html") as string) ||
@@ -68,21 +81,36 @@ export const receiveEmail = httpAction(async (ctx, request) => {
       }
     }
 
-    // Check sender allowlist — check both the original sender and the forwarder
+    // Check sender allowlist. Accept if the allowlist contains ANY of:
+    //  - the original sender (direct mail from an allowlisted address)
+    //  - the forwarder (an allowlisted address forwarded it)
+    //  - any recipient of the message (To/Cc/Delivered-To/X-Forwarded-To)
+    // The recipient check is what lets Gmail auto-forwarded newsletters through:
+    // their From is the newsletter (e.g. a Substack address), not the user, and
+    // Gmail sets no forwarder — but the user's address is still a recipient.
     const allowedSendersStr = await ctx.runQuery(internal.settings.get, {
       key: "allowed_senders",
     });
     if (allowedSendersStr) {
       const allowedSenders: string[] = JSON.parse(allowedSendersStr);
       if (allowedSenders.length > 0) {
-        const forwarderEmail = parsed.forwardedBy
-          ? extractEmail(parsed.forwardedBy)
-          : null;
+        const allowed = new Set(allowedSenders.map((a) => a.toLowerCase()));
+        const inAllowlist = (addr: string | null) =>
+          !!addr && allowed.has(extractEmail(addr).toLowerCase());
+
+        const forwarderEmail = parsed.forwardedBy || null;
+        const recipientMatch = (parsed.recipients || []).some((r) =>
+          inAllowlist(r)
+        );
+
         const isAllowed =
-          allowedSenders.includes(senderEmail) ||
-          (forwarderEmail && allowedSenders.includes(forwarderEmail));
+          inAllowlist(senderEmail) ||
+          inAllowlist(forwarderEmail) ||
+          recipientMatch;
         if (!isAllowed) {
-          console.log(`Rejected email from non-allowlisted sender: ${senderEmail}`);
+          console.log(
+            `Rejected email from non-allowlisted sender: ${senderEmail} (recipients: ${(parsed.recipients || []).join(", ") || "none"})`
+          );
           return jsonResponse({ ok: true }, 200);
         }
       }
