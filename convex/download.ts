@@ -20,13 +20,15 @@ export const downloadSigned = httpAction(async (ctx, request) => {
     return new Response("Download link expired or invalid", { status: 403 });
   }
 
-  // Determine if this is an issue or magazine ID and serve accordingly
+  // The signed token carries an id that is either an issue or a magazine. Try
+  // issue first, then magazine; a 404 from one means "not that type, try the
+  // other". Any non-404 (200 or 302 redirect) is the real response.
   const issueResult = await serveEpub(ctx, issueId as Id<"issues">);
-  if (issueResult.status === 200) {
+  if (issueResult.status !== 404) {
     return issueResult;
   }
   const magazineResult = await serveMagazine(ctx, issueId as Id<"magazines">);
-  if (magazineResult.status === 200) {
+  if (magazineResult.status !== 404) {
     return magazineResult;
   }
   return new Response("Download not found", { status: 404 });
@@ -54,27 +56,15 @@ async function serveMagazine(ctx: any, magazineId: Id<"magazines">): Promise<Res
       id: magazineId,
     });
   } catch {
-    return new Response("Invalid magazine ID", { status: 400 });
+    return new Response("Magazine not found", { status: 404 });
   }
 
   if (!magazine || !magazine.epubFileId) {
     return new Response("Magazine not found", { status: 404 });
   }
 
-  const blob = await ctx.storage.get(magazine.epubFileId);
-  if (!blob) {
-    return new Response("Magazine EPUB file not found in storage", { status: 404 });
-  }
-
   const filename = `${magazine.title.replace(/[^a-zA-Z0-9\s-]/g, "").replace(/\s+/g, "-")}.epub`;
-
-  return new Response(blob, {
-    status: 200,
-    headers: {
-      "Content-Type": "application/epub+zip",
-      "Content-Disposition": `attachment; filename="${filename}"`,
-    },
-  });
+  return serveStorageFile(ctx, magazine.epubFileId, filename);
 }
 
 async function serveEpub(ctx: any, issueId: Id<"issues">): Promise<Response> {
@@ -82,7 +72,8 @@ async function serveEpub(ctx: any, issueId: Id<"issues">): Promise<Response> {
   try {
     issue = await ctx.runQuery(internal.issues.get, { id: issueId });
   } catch {
-    return new Response("Invalid issue ID", { status: 400 });
+    // Wrong table (id is actually a magazine) — 404 so the router falls through.
+    return new Response("Issue not found", { status: 404 });
   }
 
   if (!issue) {
@@ -93,18 +84,31 @@ async function serveEpub(ctx: any, issueId: Id<"issues">): Promise<Response> {
     return new Response("EPUB not yet generated", { status: 404 });
   }
 
-  const blob = await ctx.storage.get(issue.epubFileId);
-  if (!blob) {
+  const filename = `${issue.title.replace(/[^a-zA-Z0-9\s-]/g, "").replace(/\s+/g, "-")}.epub`;
+  return serveStorageFile(ctx, issue.epubFileId, filename);
+}
+
+// Serve a stored EPUB by redirecting to its storage CDN URL, rather than
+// loading the blob into the action and returning it. Returning a large blob
+// directly from an httpAction truncates the response body (Convex caps it):
+// small EPUBs came through fine but 15-21MB magazines arrived short and corrupt
+// in readers. A 302 to the (time-limited, unguessable) storage URL lets the CDN
+// deliver the whole file with correct Content-Length and range support. The
+// signed /dl token has already been verified before we get here, so access is
+// still gated. `download=` sets the saved filename.
+async function serveStorageFile(
+  ctx: any,
+  storageId: Id<"_storage">,
+  filename: string
+): Promise<Response> {
+  const url = await ctx.storage.getUrl(storageId);
+  if (!url) {
     return new Response("EPUB file not found in storage", { status: 404 });
   }
-
-  const filename = `${issue.title.replace(/[^a-zA-Z0-9\s-]/g, "").replace(/\s+/g, "-")}.epub`;
-
-  return new Response(blob, {
-    status: 200,
-    headers: {
-      "Content-Type": "application/epub+zip",
-      "Content-Disposition": `attachment; filename="${filename}"`,
-    },
+  const redirectUrl = new URL(url);
+  redirectUrl.searchParams.set("download", filename);
+  return new Response(null, {
+    status: 302,
+    headers: { Location: redirectUrl.toString() },
   });
 }
