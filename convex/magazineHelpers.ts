@@ -87,7 +87,7 @@ export const renumberByMonthPublic = mutation({
 });
 
 /**
- * Get all "ready" issues whose issueDate (or receivedAt) falls in a given month.
+ * Get all "ready" issues RECEIVED in a given month (by receivedAt).
  */
 export const listReadyIssuesByMonth = internalQuery({
   args: { month: v.string() },
@@ -117,8 +117,11 @@ export const listReadyIssuesByMonth = internalQuery({
 
     return issues.filter((issue) => {
       if (issue.status !== "ready") return false;
-      // Use issueDate if available, otherwise receivedAt
-      const ts = issue.issueDate ?? issue.receivedAt;
+      // Bucket by when Shelfread RECEIVED the issue, not the newsletter's
+      // publication date. A June-published newsletter forwarded in July belongs
+      // in the July magazine — that's when the reader got it. Using receivedAt
+      // also sidesteps garbage extracted issueDates (e.g. a misread "2025-06").
+      const ts = issue.receivedAt;
       return ts >= startMs && ts < endMs;
     });
   },

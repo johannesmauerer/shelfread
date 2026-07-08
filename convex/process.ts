@@ -243,10 +243,10 @@ export const processEmail = internalAction({
         seriesId: issue.seriesId,
       });
 
-      // 10. Rebuild monthly magazine
-      const magazineDate = issueDate
-        ? new Date(issueDate)
-        : new Date();
+      // 10. Rebuild monthly magazine — bucket by RECEIVED date (when Shelfread
+      // got the issue), matching listReadyIssuesByMonth. Not the publication
+      // date: a June newsletter forwarded in July belongs in July's magazine.
+      const magazineDate = new Date(issue.receivedAt);
       const magazineMonth = `${magazineDate.getUTCFullYear()}-${String(magazineDate.getUTCMonth() + 1).padStart(2, "0")}`;
       await ctx.scheduler.runAfter(
         5000,

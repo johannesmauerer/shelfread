@@ -141,7 +141,7 @@ export const listByMonth = internalQuery({
     const all = await ctx.db.query("issues").collect();
     return all
       .filter((i) => {
-        const ts = i.issueDate ?? i.receivedAt;
+        const ts = i.receivedAt; // bucket by received date (matches magazine bucketing)
         const d = new Date(ts);
         const m = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
         return m === args.month;
@@ -158,7 +158,7 @@ export const listByMonthStatus = query({
     const all = await ctx.db.query("issues").collect();
     return all
       .filter((i) => {
-        const ts = i.issueDate ?? i.receivedAt;
+        const ts = i.receivedAt; // bucket by received date (matches magazine bucketing)
         const d = new Date(ts);
         const m = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
         return m === args.month;
