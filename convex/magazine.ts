@@ -164,15 +164,19 @@ export const rebuildMagazine = internalAction({
       { month: args.month }
     );
 
-    // 4. Determine issue number
+    // 4. Determine issue number by chronological month order (#1 = earliest
+    // month). For an existing magazine keep its current number here; for a new
+    // month, its rank = how many existing magazine months are earlier + 1. Either
+    // way, renumberByMonth is run at the end to keep the whole sequence in order
+    // (so a backfilled earlier month bumps later months correctly).
     let issueNumber: number;
     if (existing) {
       issueNumber = existing.issueNumber;
     } else {
-      const count: number = await ctx.runQuery(
-        internal.magazineHelpers.countAll
+      const months: string[] = await ctx.runQuery(
+        internal.magazineHelpers.allMonths
       );
-      issueNumber = count + 1;
+      issueNumber = months.filter((m) => m < args.month).length + 1;
     }
 
     // 5. Format title
@@ -231,5 +235,12 @@ export const rebuildMagazine = internalAction({
       });
       console.log(`Created magazine ${title}`);
     }
+
+    // Keep issue numbers in chronological month order. A backfilled earlier
+    // month bumps later months here (DB title + number). Note: a bumped
+    // magazine's already-generated EPUB still shows its old number on its title
+    // page until that month is itself rebuilt — the OPDS feed uses the DB title,
+    // so what the reader browses is always correct.
+    await ctx.runMutation(internal.magazineHelpers.renumberByMonth, {});
   },
 });

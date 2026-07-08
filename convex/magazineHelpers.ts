@@ -5,6 +5,7 @@ import {
   internalQuery,
   internalMutation,
 } from "./_generated/server";
+import { internal } from "./_generated/api";
 
 // --- Internal queries ---
 
@@ -38,6 +39,50 @@ export const countAll = internalQuery({
   handler: async (ctx) => {
     const all = await ctx.db.query("magazines").collect();
     return all.length;
+  },
+});
+
+export const allMonths = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("magazines").collect();
+    return all.map((m) => m.month);
+  },
+});
+
+function monthLabel(month: string): string {
+  const date = new Date(month + "-01");
+  return date.toLocaleDateString("en-US", { year: "numeric", month: "short" });
+}
+
+// Reassign every magazine's issueNumber (and its title, which embeds the number)
+// so numbers run in chronological month order: #1 = earliest month … #N =
+// latest. Idempotent. Called after a rebuild so a backfilled earlier month
+// doesn't leave the sequence out of order. Returns the resulting numbering.
+export const renumberByMonth = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const all = await ctx.db.query("magazines").collect();
+    all.sort((a, b) => a.month.localeCompare(b.month));
+    const result: { month: string; issueNumber: number }[] = [];
+    for (let i = 0; i < all.length; i++) {
+      const mag = all[i];
+      const issueNumber = i + 1;
+      const title = `ShelfRead Magazine — Issue #${issueNumber}, ${monthLabel(mag.month)}`;
+      if (mag.issueNumber !== issueNumber || mag.title !== title) {
+        await ctx.db.patch(mag._id, { issueNumber, title });
+      }
+      result.push({ month: mag.month, issueNumber });
+    }
+    return result;
+  },
+});
+
+// Public wrapper so the renumber can be triggered from the CLI / dashboard.
+export const renumberByMonthPublic = mutation({
+  args: {},
+  handler: async (ctx): Promise<{ month: string; issueNumber: number }[]> => {
+    return await ctx.runMutation(internal.magazineHelpers.renumberByMonth, {});
   },
 });
 
