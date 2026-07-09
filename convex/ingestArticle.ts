@@ -98,8 +98,15 @@ export const receiveArticle = httpAction(async (ctx, request) => {
     const senderEmail = `web@${parsed.hostname}`;
     const senderName = parsed.hostname;
 
+    // Resolve relative image URLs to absolute against the source page. Captured
+    // web pages reference images relatively (e.g. `guitar.jpg`, `/static/x.svg`),
+    // which — unlike the absolute URLs in newsletter emails — aren't fetchable
+    // once the HTML is detached from its origin, so EPUB generation would drop
+    // every image. Do this deterministically at ingest, where we have the URL.
+    const absolutizedHtml = absolutizeUrls(html, url);
+
     // Store raw HTML
-    const blob = new Blob([html], { type: "text/html" });
+    const blob = new Blob([absolutizedHtml], { type: "text/html" });
     const rawHtmlStorageId = await ctx.storage.store(blob);
 
     // Match or create series
@@ -154,4 +161,68 @@ function jsonResponse(body: Record<string, unknown>, status: number): Response {
       "Access-Control-Allow-Origin": "*",
     },
   });
+}
+
+/**
+ * Rewrite relative image URLs in captured HTML to absolute, so the images stay
+ * fetchable once the HTML is detached from its origin page. Resolves against the
+ * document's <base href> if present, otherwise the source page URL. Leaves
+ * absolute (http/https/data/blob) URLs and unresolvable values untouched.
+ * Handles both `src="..."` and `srcset="url w, url w"`.
+ */
+export function absolutizeUrls(html: string, pageUrl: string): string {
+  // <base href> overrides the page URL for relative resolution, per the HTML spec.
+  const baseMatch = html.match(
+    /<base\b[^>]*\bhref=["']([^"']+)["']/i
+  );
+  let baseUrl = pageUrl;
+  if (baseMatch) {
+    try {
+      baseUrl = new URL(baseMatch[1], pageUrl).toString();
+    } catch {
+      // keep pageUrl
+    }
+  }
+
+  const resolve = (raw: string): string => {
+    const v = raw.trim();
+    if (
+      v === "" ||
+      /^(?:https?:|data:|blob:|cid:|#|mailto:)/i.test(v) ||
+      v.startsWith("//") // protocol-relative — already absolute enough for fetch
+    ) {
+      return raw;
+    }
+    try {
+      return new URL(v, baseUrl).toString();
+    } catch {
+      return raw;
+    }
+  };
+
+  // Rewrite src="..." on img (and picture <source>) tags.
+  html = html.replace(
+    /(<(?:img|source)\b[^>]*?\bsrc=)(["'])([^"']*)\2/gi,
+    (_m, pre, q, val) => `${pre}${q}${resolve(val)}${q}`
+  );
+
+  // Rewrite srcset="url1 1x, url2 2x" — each candidate's URL is the first token.
+  html = html.replace(
+    /(\bsrcset=)(["'])([^"']*)\2/gi,
+    (_m, pre, q, val) => {
+      const rewritten = val
+        .split(",")
+        .map((cand: string) => {
+          const trimmed = cand.trim();
+          if (!trimmed) return cand;
+          const parts = trimmed.split(/\s+/);
+          parts[0] = resolve(parts[0]);
+          return parts.join(" ");
+        })
+        .join(", ");
+      return `${pre}${q}${rewritten}${q}`;
+    }
+  );
+
+  return html;
 }

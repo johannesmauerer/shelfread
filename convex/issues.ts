@@ -67,6 +67,15 @@ export const get = internalQuery({
   },
 });
 
+// Repoint an issue at a new raw-HTML blob (used to retroactively fix stored
+// captures, e.g. absolutizing relative image URLs on already-ingested articles).
+export const setRawHtml = internalMutation({
+  args: { id: v.id("issues"), rawHtmlStorageId: v.id("_storage") },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.id, { rawHtmlStorageId: args.rawHtmlStorageId });
+  },
+});
+
 export const listRecent = query({
   args: {},
   handler: async (ctx) => {
