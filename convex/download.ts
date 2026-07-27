@@ -34,6 +34,43 @@ export const downloadSigned = httpAction(async (ctx, request) => {
   return new Response("Download not found", { status: 404 });
 });
 
+// Magazine cover endpoint (used by OPDS image links). Same signed-token
+// scheme as /dl/ — the token carries the magazine id.
+export const coverSigned = httpAction(async (ctx, request) => {
+  const url = new URL(request.url);
+  const tokenMatch = url.pathname.match(/^\/cover\/(.+)$/);
+  if (!tokenMatch) {
+    return new Response("Invalid cover URL", { status: 400 });
+  }
+
+  const secret = process.env.DOWNLOAD_SECRET || "shelf-dev-secret";
+  const { issueId, valid } = await verifySignedToken(tokenMatch[1], secret);
+  if (!valid) {
+    return new Response("Cover link expired or invalid", { status: 403 });
+  }
+
+  let magazine;
+  try {
+    magazine = await ctx.runQuery(internal.magazineHelpers.getById, {
+      id: issueId as Id<"magazines">,
+    });
+  } catch {
+    return new Response("Cover not found", { status: 404 });
+  }
+  if (!magazine?.coverFileId) {
+    return new Response("Cover not found", { status: 404 });
+  }
+
+  const fileUrl = await ctx.storage.getUrl(magazine.coverFileId);
+  if (!fileUrl) {
+    return new Response("Cover not found", { status: 404 });
+  }
+  return new Response(null, {
+    status: 302,
+    headers: { Location: fileUrl },
+  });
+});
+
 // Direct download endpoint (used by dashboard, no signing required for now)
 export const downloadDirect = httpAction(async (ctx, request) => {
   const { searchParams } = new URL(request.url);

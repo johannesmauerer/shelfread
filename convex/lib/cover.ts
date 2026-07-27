@@ -24,11 +24,24 @@ let cachedFont: opentype.Font | null = null;
 const cachedCovers = new Map<string, Buffer>();
 
 async function fetchBuffer(url: string): Promise<Buffer> {
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Asset fetch failed: ${url} → ${res.status} ${res.statusText}`);
+  // raw.githubusercontent.com occasionally 429s/resets from Convex egress; a
+  // single failed fetch used to ship a coverless magazine silently. Retry
+  // before giving up (the July 2026 issue lost its cover this way).
+  const delaysMs = [0, 1000, 3000];
+  let lastErr: unknown;
+  for (const delay of delaysMs) {
+    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        throw new Error(`Asset fetch failed: ${url} → ${res.status} ${res.statusText}`);
+      }
+      return Buffer.from(await res.arrayBuffer());
+    } catch (err) {
+      lastErr = err;
+    }
   }
-  return Buffer.from(await res.arrayBuffer());
+  throw lastErr;
 }
 
 async function loadFont(): Promise<opentype.Font> {

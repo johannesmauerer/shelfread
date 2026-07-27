@@ -316,6 +316,7 @@ async function handleMagazine(ctx: any, basePath: string): Promise<Response> {
         published: new Date(mag.createdAt).toISOString(),
         summary: `Monthly digest — ${mag.articleCount} article${mag.articleCount === 1 ? "" : "s"}`,
         downloadHref: `/dl/${token}`,
+        coverHref: mag.coverFileId ? `/cover/${token}` : undefined,
         sizeBytes: mag.epubSizeBytes,
       };
     })

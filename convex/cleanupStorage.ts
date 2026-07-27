@@ -24,6 +24,7 @@ export const deleteOrphans = internalMutation({
     }
     for (const m of await ctx.db.query("magazines").collect()) {
       if (m.epubFileId) referenced.add(m.epubFileId);
+      if (m.coverFileId) referenced.add(m.coverFileId);
     }
 
     // System table: every stored file.

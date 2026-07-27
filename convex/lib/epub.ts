@@ -107,6 +107,9 @@ interface MagazineOptions {
   issueNumber: number;
   month: string; // "2026-04"
   articles: MagazineArticle[];
+  // Pre-composed cover PNG (e.g. the cached one from a prior successful build).
+  // When provided, composeCover is skipped entirely.
+  coverPng?: Buffer;
 }
 
 function buildMagazineCoverHtml(options: MagazineOptions): string {
@@ -329,17 +332,20 @@ export async function generateMagazineEpub(options: MagazineOptions): Promise<Bu
     })),
   ];
 
-  // Compose the painted cover image (mid-century base art + masthead + issue badge).
-  // Falls back to coverless EPUB if composition fails — log but don't break the build.
+  // Painted cover image (mid-century base art + masthead + issue badge) —
+  // caller-provided when available, composed here otherwise. Falls back to a
+  // coverless EPUB only if both paths fail.
   let coverFile: File | undefined;
   try {
-    const coverPng = await composeCover({
-      month: options.month,
-      issueNumber: options.issueNumber,
-    });
+    const coverPng =
+      options.coverPng ??
+      (await composeCover({
+        month: options.month,
+        issueNumber: options.issueNumber,
+      }));
     coverFile = new File([coverPng], "cover.png", { type: "image/png" });
   } catch (err) {
-    console.warn("Cover composition failed, falling back to no cover:", err);
+    console.error("Cover composition failed, falling back to no cover:", err);
   }
 
   const epubInstance = new EPub(

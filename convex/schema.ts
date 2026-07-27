@@ -68,6 +68,9 @@ export default defineSchema({
     articleIds: v.array(v.id("issues")),
     epubFileId: v.optional(v.id("_storage")),
     epubSizeBytes: v.optional(v.number()),
+    // Last successfully composed cover PNG — reused when composition fails
+    // during a rebuild, so a transient asset-fetch error can't ship coverless.
+    coverFileId: v.optional(v.id("_storage")),
     updatedAt: v.number(),
     createdAt: v.number(),
   })

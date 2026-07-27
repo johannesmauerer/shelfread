@@ -30,6 +30,7 @@ interface AcquisitionEntry {
   published?: string;
   summary?: string;
   downloadHref: string;
+  coverHref?: string; // OPDS image link — shows the cover while browsing the catalog
   seriesName?: string;
   sizeBytes?: number;
 }
@@ -98,6 +99,8 @@ ${opts.entries
     <link href="${escapeXml(e.downloadHref)}"
           type="application/epub+zip"
           rel="http://opds-spec.org/acquisition"/>
+    ${e.coverHref ? `<link href="${escapeXml(e.coverHref)}" type="image/png" rel="http://opds-spec.org/image"/>
+    <link href="${escapeXml(e.coverHref)}" type="image/png" rel="http://opds-spec.org/image/thumbnail"/>` : ""}
   </entry>`
   )
   .join("\n")}

@@ -4,6 +4,7 @@ import { v } from "convex/values";
 import { internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { generateMagazineEpub } from "./lib/epub";
+import { composeCover } from "./lib/cover";
 import type { Doc, Id } from "./_generated/dataModel";
 
 // Delete a storage blob without letting a missing/already-deleted id throw.
@@ -18,6 +19,56 @@ async function deleteStorageSafe(
   } catch (err) {
     console.warn(`Skipping delete of missing storage blob ${id}:`, err);
   }
+}
+
+// Compose the month's cover; if composition fails (e.g. transient GitHub asset
+// fetch error), fall back to the last successfully composed cover cached in
+// storage. `fresh` tells the caller whether to (re)cache the bytes.
+async function resolveCover(
+  ctx: { storage: { get: (id: Id<"_storage">) => Promise<Blob | null> } },
+  cachedCoverId: Id<"_storage"> | undefined,
+  month: string,
+  issueNumber: number
+): Promise<{ png: Buffer | undefined; fresh: boolean }> {
+  try {
+    const png = await composeCover({ month, issueNumber });
+    return { png, fresh: true };
+  } catch (err) {
+    console.error(`Cover composition failed for ${month}:`, err);
+  }
+  if (cachedCoverId) {
+    try {
+      const blob = await ctx.storage.get(cachedCoverId);
+      if (blob) {
+        console.error(`Reusing cached cover for ${month} after composition failure`);
+        return { png: Buffer.from(await blob.arrayBuffer()), fresh: false };
+      }
+    } catch (err) {
+      console.error(`Cached cover ${cachedCoverId} unreadable:`, err);
+    }
+  }
+  console.error(`No cover available for ${month} — shipping coverless EPUB`);
+  return { png: undefined, fresh: false };
+}
+
+// Store a freshly composed cover and free the previous cached one. Returns the
+// coverFileId the magazine record should carry.
+async function storeCover(
+  ctx: {
+    storage: {
+      store: (blob: Blob) => Promise<Id<"_storage">>;
+      delete: (id: Id<"_storage">) => Promise<void>;
+    };
+  },
+  cover: { png: Buffer | undefined; fresh: boolean },
+  previousCoverId: Id<"_storage"> | undefined
+): Promise<Id<"_storage"> | undefined> {
+  if (!cover.fresh || !cover.png) return previousCoverId;
+  const newId = await ctx.storage.store(
+    new Blob([cover.png], { type: "image/png" })
+  );
+  if (previousCoverId) await deleteStorageSafe(ctx, previousCoverId);
+  return newId;
 }
 
 /**
@@ -84,11 +135,19 @@ export const rebuildExistingMagazine = internalAction({
       `Rebuilding ${existing.title} (${articles.length} articles, was ${existing.articleCount})`
     );
 
+    const cover = await resolveCover(
+      ctx,
+      existing.coverFileId,
+      existing.month,
+      existing.issueNumber
+    );
+
     const epubBuffer = await generateMagazineEpub({
       title: existing.title,
       issueNumber: existing.issueNumber,
       month: existing.month,
       articles,
+      coverPng: cover.png,
     });
 
     const blob = new Blob([epubBuffer], { type: "application/epub+zip" });
@@ -101,6 +160,8 @@ export const rebuildExistingMagazine = internalAction({
       await deleteStorageSafe(ctx, existing.epubFileId);
     }
 
+    const coverFileId = await storeCover(ctx, cover, existing.coverFileId);
+
     await ctx.runMutation(internal.magazineHelpers.update, {
       id: existing._id,
       title: existing.title,
@@ -108,6 +169,7 @@ export const rebuildExistingMagazine = internalAction({
       articleIds: orderedIssues.map((i) => i._id) as Id<"issues">[],
       epubFileId,
       epubSizeBytes: epubBuffer.length,
+      coverFileId,
       updatedAt: Date.now(),
     });
 
@@ -192,16 +254,25 @@ export const rebuildMagazine = internalAction({
       `Building magazine: ${title} (${articles.length} articles)`
     );
 
+    const cover = await resolveCover(
+      ctx,
+      existing?.coverFileId,
+      args.month,
+      issueNumber
+    );
+
     const epubBuffer = await generateMagazineEpub({
       title,
       issueNumber,
       month: args.month,
       articles,
+      coverPng: cover.png,
     });
 
     // 7. Store EPUB (delete old one if updating)
     const blob = new Blob([epubBuffer], { type: "application/epub+zip" });
     const epubFileId = await ctx.storage.store(blob);
+    const coverFileId = await storeCover(ctx, cover, existing?.coverFileId);
 
     // 8. Create or update magazine record
     const articleIds = articles.map(
@@ -220,6 +291,7 @@ export const rebuildMagazine = internalAction({
         articleIds,
         epubFileId,
         epubSizeBytes: epubBuffer.length,
+        coverFileId,
         updatedAt: Date.now(),
       });
       console.log(`Updated magazine ${title}`);
@@ -232,6 +304,7 @@ export const rebuildMagazine = internalAction({
         articleIds,
         epubFileId,
         epubSizeBytes: epubBuffer.length,
+        coverFileId,
       });
       console.log(`Created magazine ${title}`);
     }

@@ -138,6 +138,7 @@ export const create = internalMutation({
     articleIds: v.array(v.id("issues")),
     epubFileId: v.id("_storage"),
     epubSizeBytes: v.number(),
+    coverFileId: v.optional(v.id("_storage")),
   },
   handler: async (ctx, args) => {
     return await ctx.db.insert("magazines", {
@@ -148,6 +149,7 @@ export const create = internalMutation({
       articleIds: args.articleIds,
       epubFileId: args.epubFileId,
       epubSizeBytes: args.epubSizeBytes,
+      coverFileId: args.coverFileId,
       updatedAt: Date.now(),
       createdAt: Date.now(),
     });
@@ -162,6 +164,7 @@ export const update = internalMutation({
     articleIds: v.array(v.id("issues")),
     epubFileId: v.id("_storage"),
     epubSizeBytes: v.number(),
+    coverFileId: v.optional(v.id("_storage")),
     updatedAt: v.number(),
   },
   handler: async (ctx, args) => {

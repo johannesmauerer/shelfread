@@ -2,7 +2,7 @@ import { httpRouter } from "convex/server";
 import { receiveEmail } from "./ingest";
 import { receiveUrl } from "./ingestUrl";
 import { receiveArticle } from "./ingestArticle";
-import { downloadDirect, downloadSigned } from "./download";
+import { downloadDirect, downloadSigned, coverSigned } from "./download";
 import { opdsRouter } from "./opds";
 
 const http = httpRouter();
@@ -40,6 +40,13 @@ http.route({
   pathPrefix: "/dl/",
   method: "GET",
   handler: downloadSigned,
+});
+
+// Signed magazine cover (OPDS image links)
+http.route({
+  pathPrefix: "/cover/",
+  method: "GET",
+  handler: coverSigned,
 });
 
 // OPDS catalog (all routes under /opds/)
